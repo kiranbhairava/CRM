@@ -1,8 +1,8 @@
-# roles.py - Role Management System
+# roles.py - Role Management System (Fixed Password Length Issue)
 from sqlalchemy import Column, Enum, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import Session, relationship
 from sqlalchemy.ext.declarative import declarative_base
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, validator
 from passlib.context import CryptContext
 from datetime import datetime
 from typing import Optional, List
@@ -23,7 +23,7 @@ class UserRole(str, PyEnum):
     SALES_MANAGER = "SALES_MANAGER"
     SALES_REP = "SALES_REP"
 
-# Pydantic Models
+# Pydantic Models with password validation
 class UserCreate(BaseModel):
     email: EmailStr
     name: str
@@ -31,9 +31,29 @@ class UserCreate(BaseModel):
     role: Optional[UserRole] = UserRole.SALES_MANAGER
     monthly_target: Optional[int] = 0
 
+    @validator('password')
+    def validate_password_length(cls, v):
+        # Convert to bytes and check length
+        password_bytes = v.encode('utf-8')
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes
+            truncated_bytes = password_bytes[:72]
+            v = truncated_bytes.decode('utf-8', 'ignore')
+        return v
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    @validator('password')
+    def validate_password_length(cls, v):
+        # Convert to bytes and check length
+        password_bytes = v.encode('utf-8')
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes
+            truncated_bytes = password_bytes[:72]
+            v = truncated_bytes.decode('utf-8', 'ignore')
+        return v
 
 class UserResponse(BaseModel):
     id: int
@@ -49,15 +69,35 @@ class SalesManagerCreate(BaseModel):
     password: str
     monthly_target: Optional[int] = 0
 
-# RoleManager
+    @validator('password')
+    def validate_password_length(cls, v):
+        # Convert to bytes and check length
+        password_bytes = v.encode('utf-8')
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes
+            truncated_bytes = password_bytes[:72]
+            v = truncated_bytes.decode('utf-8', 'ignore')
+        return v
+
+# RoleManager (Fixed version)
 class RoleManager:
 
     @staticmethod
     def verify_password(plain_password, hashed_password):
+        # Ensure plain password doesn't exceed 72 bytes
+        if isinstance(plain_password, str):
+            password_bytes = plain_password.encode('utf-8')
+            if len(password_bytes) > 72:
+                plain_password = password_bytes[:72].decode('utf-8', 'ignore')
         return pwd_context.verify(plain_password, hashed_password)
 
     @staticmethod
     def get_password_hash(password: str) -> str:
+        # Ensure password doesn't exceed 72 bytes before hashing
+        if isinstance(password, str):
+            password_bytes = password.encode('utf-8')
+            if len(password_bytes) > 72:
+                password = password_bytes[:72].decode('utf-8', 'ignore')
         return pwd_context.hash(password)
 
     @staticmethod
@@ -158,7 +198,7 @@ class RoleManager:
         db.commit()
         return True
 
-# Permission Checker
+# Permission Checker (unchanged)
 class PermissionChecker:
 
     @staticmethod
