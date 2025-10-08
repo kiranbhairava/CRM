@@ -30,8 +30,6 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-
 # Create all tables
 def create_tables():
     """Create all database tables if they don't exist"""
