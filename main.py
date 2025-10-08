@@ -20,8 +20,43 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://user:password@localhost/edtech_crm")
 
 # Database setup
-engine = create_engine(DATABASE_URL)
+# engine = create_engine(DATABASE_URL)
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=280
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+
+# Create all tables
+def create_tables():
+    """Create all database tables if they don't exist"""
+    try:
+        print("Creating database tables if they don't exist...")
+        
+        # Import all models to ensure they are registered with Base
+        from roles import Base as RoleBase
+        from models import Base as ModelBase
+        # from models import Base as ModelBase
+        # from google_integration import Base as GoogleBase
+        
+        # Since all models use the same Base from roles, we can use RoleBase
+        ModelBase.metadata.create_all(bind=engine)
+        print("Database tables created successfully!")
+        
+        # Check if tables exist
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        print(f"Available tables: {tables}")
+        
+    except Exception as e:
+        print(f"Error creating tables: {str(e)}")
+        raise
 
 # FastAPI app
 app = FastAPI(title="EdTech CRM - Adult Learners", version="1.0.0")
@@ -42,6 +77,11 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# Create tables on startup
+@app.on_event("startup")
+def on_startup():
+    create_tables()
 
 # Simple auth helpers (without circular imports)
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
