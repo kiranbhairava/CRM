@@ -1263,7 +1263,7 @@ async def google_callback(
         oauth_state_store.pop(state, None)
 
         # Redirect to frontend leads page
-        return RedirectResponse(url="http://127.0.0.1:5500/leads.html")
+        return RedirectResponse(url="https://crm-frontend-eta-drab.vercel.app/leads.html")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
