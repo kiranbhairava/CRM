@@ -1263,7 +1263,7 @@ async def google_callback(
         oauth_state_store.pop(state, None)
 
         # Redirect to frontend leads page
-        return RedirectResponse(url="https://crm-frontend-eta-drab.vercel.app/leads.html")
+        return RedirectResponse(url="http://127.0.0.1:5500/leads.html")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1879,6 +1879,45 @@ async def get_lead_communications(
         'user_id': c.user_id,
     } for c in communications]
 
+# Add this to your main.py file
+
+@app.delete("/leads/{lead_id}")
+async def delete_lead(
+    lead_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a lead - ADMIN ONLY"""
+    try:
+        # Check if user is admin
+        if not PermissionChecker.is_admin(current_user):
+            raise HTTPException(
+                status_code=403, 
+                detail="Admin permission required to delete leads"
+            )
+        
+        # Get the lead
+        lead = db.query(Lead).filter(Lead.id == lead_id).first()
+        
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        
+        # Hard delete - permanently remove from database
+        db.delete(lead)
+        db.commit()
+        
+        return {
+            "message": "Lead deleted successfully",
+            "lead_id": lead_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting lead: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete lead: {str(e)}")
+    
 # Add this endpoint to main.py (after your communications endpoints)
 
 # @app.get("/leads/{lead_id}/activities")
