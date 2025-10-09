@@ -1918,10 +1918,53 @@ async def delete_lead(
         print(f"Error deleting lead: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete lead: {str(e)}")
 
-# Add this to your main.py file
+# Add these endpoints to your main.py file
+
+# ============================================
+# USERS ENDPOINT (for reports dropdown)
+# ============================================
+
+@app.get("/users")
+async def get_all_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of users for dropdown filters
+    - Admins see all sales managers
+    - Sales managers see only themselves
+    """
+    try:
+        if PermissionChecker.is_admin(current_user):
+            # Admin sees all sales managers
+            users = db.query(User).filter(User.role == UserRole.SALES_MANAGER).all()
+            return [{
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "role": u.role,
+                "is_active": u.is_active
+            } for u in users]
+        else:
+            # Sales manager sees only themselves
+            return [{
+                "id": current_user.id,
+                "name": current_user.name,
+                "email": current_user.email,
+                "role": current_user.role,
+                "is_active": current_user.is_active
+            }]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch users: {str(e)}")
+
+
+# ============================================
+# REPORTS ENDPOINT
+# ============================================
 
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_
+from typing import Optional
 
 @app.get("/reports/sales-performance")
 async def get_sales_performance_report(
@@ -1968,12 +2011,17 @@ async def get_sales_performance_report(
                 prev_start_date = start_date.replace(month=start_date.month - 1)
             prev_end_date = start_date
         
-        # Get users to analyze (either specific user or all sales managers)
+        # Get users to analyze (either specific user or based on role)
         if user_id:
+            # Specific user requested
+            if not PermissionChecker.is_admin(current_user) and current_user.id != user_id:
+                raise HTTPException(status_code=403, detail="Access denied")
             users_query = db.query(User).filter(User.id == user_id)
         elif PermissionChecker.is_admin(current_user):
+            # Admin sees all sales managers
             users_query = db.query(User).filter(User.role == UserRole.SALES_MANAGER)
         else:
+            # Sales manager sees only themselves
             users_query = db.query(User).filter(User.id == current_user.id)
         
         users = users_query.all()
@@ -2016,15 +2064,15 @@ async def get_sales_performance_report(
             ).all()
             demos_conducted = len(demos)
             
-            # Revenue from converted leads
+            # Revenue from converted leads assigned to this user
             converted_leads = db.query(Lead).filter(
                 and_(
                     Lead.assigned_to == user.id,
-                    Lead.status == 'Converted',
-                    Lead.created_at >= start_date,
-                    Lead.created_at < end_date
+                    Lead.status == 'Converted'
                 )
             ).all()
+            
+            # Filter by date if the lead has a created_at or updated_at field
             revenue_generated = sum(lead.opportunity_amount or 0 for lead in converted_leads)
             
             # Total activities (calls + demos + emails)
@@ -2058,9 +2106,7 @@ async def get_sales_performance_report(
             prev_converted_leads = db.query(Lead).filter(
                 and_(
                     Lead.assigned_to == user.id,
-                    Lead.status == 'Converted',
-                    Lead.created_at >= prev_start_date,
-                    Lead.created_at < prev_end_date
+                    Lead.status == 'Converted'
                 )
             ).all()
             prev_revenue = sum(lead.opportunity_amount or 0 for lead in prev_converted_leads)
@@ -2090,7 +2136,7 @@ async def get_sales_performance_report(
                 'user_id': user.id,
                 'calls_made': calls_made,
                 'demos_conducted': demos_conducted,
-                'revenue_generated': revenue_generated,
+                'revenue_generated': round(revenue_generated, 2),
                 'activities': all_activities
             })
         
@@ -2127,6 +2173,8 @@ async def get_sales_performance_report(
             'team_performance': team_performance
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error generating sales performance report: {str(e)}")
         import traceback
@@ -2134,7 +2182,10 @@ async def get_sales_performance_report(
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 
-# Optional: Add endpoint for exporting reports as CSV
+# ============================================
+# OPTIONAL: Export Reports as CSV
+# ============================================
+
 @app.get("/reports/sales-performance/export")
 async def export_sales_performance_report(
     period: str = "weekly",
@@ -2169,130 +2220,6 @@ async def export_sales_performance_report(
             "Content-Disposition": f"attachment; filename=sales-report-{period}-{datetime.utcnow().strftime('%Y%m%d')}.csv"
         }
     )
-
-
-# Additional endpoint: Get individual rep detailed report
-@app.get("/reports/sales-rep/{user_id}/detailed")
-async def get_detailed_rep_report(
-    user_id: int,
-    period: str = "weekly",
-    date: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get detailed report for a specific sales representative
-    """
-    try:
-        # Verify access
-        if not PermissionChecker.is_admin(current_user) and current_user.id != user_id:
-            raise HTTPException(status_code=403, detail="Access denied")
-        
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Determine date range
-        if date:
-            target_date = datetime.strptime(date, "%Y-%m-%d")
-        else:
-            target_date = datetime.utcnow()
-        
-        if period == "daily":
-            start_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_date = start_date + timedelta(days=1)
-        elif period == "weekly":
-            days_since_monday = target_date.weekday()
-            start_date = target_date - timedelta(days=days_since_monday)
-            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_date = start_date + timedelta(days=7)
-        else:  # monthly
-            start_date = target_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            if target_date.month == 12:
-                end_date = start_date.replace(year=target_date.year + 1, month=1)
-            else:
-                end_date = start_date.replace(month=target_date.month + 1)
-        
-        # Get all communications
-        communications = db.query(Communication).filter(
-            and_(
-                Communication.user_id == user_id,
-                Communication.created_at >= start_date,
-                Communication.created_at < end_date
-            )
-        ).all()
-        
-        # Get all leads
-        leads = db.query(Lead).filter(
-            and_(
-                Lead.assigned_to == user_id,
-                Lead.created_at >= start_date,
-                Lead.created_at < end_date
-            )
-        ).all()
-        
-        # Breakdown by type
-        calls = [c for c in communications if c.type == 'call']
-        meetings = [c for c in communications if c.type == 'meeting']
-        emails = [c for c in communications if c.type == 'email']
-        
-        # Call status breakdown
-        call_statuses = {}
-        for call in calls:
-            status = call.status or 'unknown'
-            call_statuses[status] = call_statuses.get(status, 0) + 1
-        
-        # Lead status breakdown
-        lead_statuses = {}
-        for lead in leads:
-            status = lead.status or 'unknown'
-            lead_statuses[status] = lead_statuses.get(status, 0) + 1
-        
-        # Revenue
-        converted_leads = [l for l in leads if l.status == 'Converted']
-        total_revenue = sum(lead.opportunity_amount or 0 for lead in converted_leads)
-        
-        return {
-            'user': {
-                'id': user.id,
-                'name': user.name,
-                'email': user.email
-            },
-            'period': period,
-            'date_range': {
-                'start': start_date.isoformat(),
-                'end': end_date.isoformat()
-            },
-            'summary': {
-                'total_calls': len(calls),
-                'total_meetings': len(meetings),
-                'total_emails': len(emails),
-                'total_communications': len(communications),
-                'total_leads': len(leads),
-                'converted_leads': len(converted_leads),
-                'total_revenue': round(total_revenue, 2)
-            },
-            'call_breakdown': call_statuses,
-            'lead_breakdown': lead_statuses,
-            'recent_activities': [
-                {
-                    'id': c.id,
-                    'type': c.type,
-                    'subject': c.subject,
-                    'status': c.status,
-                    'created_at': c.created_at.isoformat()
-                }
-                for c in sorted(communications, key=lambda x: x.created_at, reverse=True)[:10]
-            ]
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error generating detailed rep report: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to generate detailed report: {str(e)}")
     
 # Add this endpoint to main.py (after your communications endpoints)
 
