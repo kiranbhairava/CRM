@@ -153,22 +153,44 @@ class GoogleToken(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-# class Communication(Base):
-#     __tablename__ = "communications"
+# Add this to models.py
+
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, JSON
+from datetime import datetime
+
+class ActionTimeline(Base):
+    """Tracks all CRUD operations and major actions across the CRM"""
+    __tablename__ = "action_timeline"
     
-#     id = Column(Integer, primary_key=True, index=True)
-#     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
-#     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-#     type = Column(String(50), nullable=False)  # email, call, meeting
-#     subject = Column(String(500), nullable=True)
-#     content = Column(Text, nullable=True)
-#     scheduled_at = Column(DateTime, nullable=True)
-#     completed_at = Column(DateTime, nullable=True)
-#     status = Column(String(50), default="pending")  # pending, completed, cancelled
-#     google_event_id = Column(String(255), nullable=True)
-#     google_message_id = Column(String(255), nullable=True)
-#     meet_link = Column(String(500), nullable=True)
-#     created_at = Column(DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Who performed the action
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    user_name = Column(String(255), nullable=False)  # Denormalized for performance
+    
+    # What was done
+    action_type = Column(String(50), nullable=False)  # CREATE, UPDATE, DELETE, STATUS_CHANGE, ASSIGN, etc.
+    entity_type = Column(String(50), nullable=False)  # lead, communication, user, etc.
+    entity_id = Column(Integer, nullable=False)
+    
+    # Details about the action
+    description = Column(Text, nullable=False)  # Human-readable description
+    details = Column(JSON, nullable=True)  # Additional structured data (old_value, new_value, etc.)
+    
+    # Metadata
+    ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+# Pydantic model for creating timeline entries
+class TimelineEntryCreate(BaseModel):
+    action_type: str
+    entity_type: str
+    entity_id: int
+    description: str
+    details: Optional[dict] = None
 
 # Updated Pydantic Models
 class LeadCreate(BaseModel):
