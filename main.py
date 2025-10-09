@@ -2249,6 +2249,120 @@ async def export_sales_performance_report(
         }
     )
     
+
+# Add this endpoint to your main.py file
+
+from pydantic import BaseModel
+from typing import Optional
+
+# Pydantic model for updating communication
+class CommunicationUpdate(BaseModel):
+    subject: Optional[str] = None
+    status: Optional[str] = None
+    content: Optional[str] = None
+    scheduled_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+@app.put("/communications/{communication_id}")
+async def update_communication(
+    communication_id: int,
+    update_data: CommunicationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a communication (call, email, meeting, etc.)
+    """
+    try:
+        # Get the communication
+        comm = db.query(Communication).filter(Communication.id == communication_id).first()
+        
+        if not comm:
+            raise HTTPException(status_code=404, detail="Communication not found")
+        
+        # Check permissions - user must be the creator or an admin
+        if comm.user_id != current_user.id and not PermissionChecker.is_admin(current_user):
+            raise HTTPException(status_code=403, detail="You don't have permission to edit this communication")
+        
+        # Update fields if provided
+        if update_data.subject is not None:
+            comm.subject = update_data.subject
+        
+        if update_data.status is not None:
+            comm.status = update_data.status
+            # If status is completed/held, set completed_at if not already set
+            if update_data.status.lower() in ['completed', 'held'] and not comm.completed_at:
+                comm.completed_at = datetime.utcnow()
+        
+        if update_data.content is not None:
+            comm.content = update_data.content
+        
+        if update_data.scheduled_at is not None:
+            comm.scheduled_at = update_data.scheduled_at
+        
+        if update_data.completed_at is not None:
+            comm.completed_at = update_data.completed_at
+        
+        db.commit()
+        db.refresh(comm)
+        
+        return {
+            'id': comm.id,
+            'lead_id': comm.lead_id,
+            'type': comm.type,
+            'subject': comm.subject,
+            'content': comm.content,
+            'status': comm.status,
+            'scheduled_at': comm.scheduled_at,
+            'completed_at': comm.completed_at,
+            'created_at': comm.created_at,
+            'message': 'Communication updated successfully'
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Error updating communication: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update communication: {str(e)}")
+
+
+# Optional: Delete communication endpoint
+@app.delete("/communications/{communication_id}")
+async def delete_communication(
+    communication_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a communication
+    """
+    try:
+        # Get the communication
+        comm = db.query(Communication).filter(Communication.id == communication_id).first()
+        
+        if not comm:
+            raise HTTPException(status_code=404, detail="Communication not found")
+        
+        # Check permissions - user must be the creator or an admin
+        if comm.user_id != current_user.id and not PermissionChecker.is_admin(current_user):
+            raise HTTPException(status_code=403, detail="You don't have permission to delete this communication")
+        
+        db.delete(comm)
+        db.commit()
+        
+        return {"message": "Communication deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting communication: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to delete communication: {str(e)}")
 # Add this endpoint to main.py (after your communications endpoints)
 
 # @app.get("/leads/{lead_id}/activities")
