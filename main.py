@@ -1918,49 +1918,7 @@ async def delete_lead(
         print(f"Error deleting lead: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete lead: {str(e)}")
 
-# Add these endpoints to your main.py file
-
-# ============================================
-# USERS ENDPOINT (for reports dropdown)
-# ============================================
-
-@app.get("/users")
-async def get_all_users(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get list of users for dropdown filters
-    - Admins see all sales managers
-    - Sales managers see only themselves
-    """
-    try:
-        if PermissionChecker.is_admin(current_user):
-            # Admin sees all sales managers
-            users = db.query(User).filter(User.role == UserRole.SALES_MANAGER).all()
-            return [{
-                "id": u.id,
-                "name": u.name,
-                "email": u.email,
-                "role": u.role,
-                "is_active": u.is_active
-            } for u in users]
-        else:
-            # Sales manager sees only themselves
-            return [{
-                "id": current_user.id,
-                "name": current_user.name,
-                "email": current_user.email,
-                "role": current_user.role,
-                "is_active": current_user.is_active
-            }]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch users: {str(e)}")
-
-
-# ============================================
-# REPORTS ENDPOINT
-# ============================================
+# Replace the /reports/sales-performance endpoint in your main.py with this updated version
 
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_
@@ -1975,7 +1933,7 @@ async def get_sales_performance_report(
     db: Session = Depends(get_db)
 ):
     """
-    Get sales performance reports with calls, demos, and revenue statistics
+    Get sales performance reports with detailed call and demo statistics
     """
     try:
         # Determine date range based on period
@@ -2027,23 +1985,28 @@ async def get_sales_performance_report(
         users = users_query.all()
         
         # Initialize summary metrics
-        total_calls = 0
-        total_demos = 0
+        total_calls_dialed = 0
+        total_calls_answered = 0
+        total_demos_scheduled = 0
+        total_demos_completed = 0
         total_revenue = 0
         total_activities = 0
         
-        # Previous period metrics for change calculation
-        prev_total_calls = 0
-        prev_total_demos = 0
-        prev_total_revenue = 0
-        prev_total_activities = 0
+        # Previous period metrics
+        prev_calls_dialed = 0
+        prev_calls_answered = 0
+        prev_demos_scheduled = 0
+        prev_demos_completed = 0
+        prev_revenue = 0
+        prev_activities = 0
         
         team_performance = []
         
         for user in users:
-            # Current period metrics
-            # Calls made
-            calls = db.query(Communication).filter(
+            # ===== CURRENT PERIOD =====
+            
+            # Get all calls
+            all_calls = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
                     Communication.type == 'call',
@@ -2051,10 +2014,15 @@ async def get_sales_performance_report(
                     Communication.created_at < end_date
                 )
             ).all()
-            calls_made = len(calls)
             
-            # Demos conducted (meetings)
-            demos = db.query(Communication).filter(
+            calls_dialed = len(all_calls)
+            
+            # Count calls that were answered (status: 'completed', 'held', or similar success indicators)
+            # Adjust these status values based on your actual data
+            calls_answered = len([c for c in all_calls if c.status and c.status.lower() in ['completed', 'held', 'answered', 'successful']])
+            
+            # Get all demos/meetings
+            all_demos = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
                     Communication.type == 'meeting',
@@ -2062,20 +2030,22 @@ async def get_sales_performance_report(
                     Communication.created_at < end_date
                 )
             ).all()
-            demos_conducted = len(demos)
             
-            # Revenue from converted leads assigned to this user
+            demos_scheduled = len(all_demos)
+            
+            # Count demos that were completed
+            demos_completed = len([d for d in all_demos if d.status and d.status.lower() in ['completed', 'done', 'held']])
+            
+            # Revenue from converted leads
             converted_leads = db.query(Lead).filter(
                 and_(
                     Lead.assigned_to == user.id,
                     Lead.status == 'Converted'
                 )
             ).all()
-            
-            # Filter by date if the lead has a created_at or updated_at field
             revenue_generated = sum(lead.opportunity_amount or 0 for lead in converted_leads)
             
-            # Total activities (calls + demos + emails)
+            # Total activities
             all_activities = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
@@ -2084,24 +2054,31 @@ async def get_sales_performance_report(
                 )
             ).count()
             
-            # Previous period metrics
-            prev_calls = db.query(Communication).filter(
+            # ===== PREVIOUS PERIOD =====
+            
+            prev_all_calls = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
                     Communication.type == 'call',
                     Communication.created_at >= prev_start_date,
                     Communication.created_at < prev_end_date
                 )
-            ).count()
+            ).all()
             
-            prev_demos = db.query(Communication).filter(
+            prev_calls_dialed_user = len(prev_all_calls)
+            prev_calls_answered_user = len([c for c in prev_all_calls if c.status and c.status.lower() in ['completed', 'held', 'answered', 'successful']])
+            
+            prev_all_demos = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
                     Communication.type == 'meeting',
                     Communication.created_at >= prev_start_date,
                     Communication.created_at < prev_end_date
                 )
-            ).count()
+            ).all()
+            
+            prev_demos_scheduled_user = len(prev_all_demos)
+            prev_demos_completed_user = len([d for d in prev_all_demos if d.status and d.status.lower() in ['completed', 'done', 'held']])
             
             prev_converted_leads = db.query(Lead).filter(
                 and_(
@@ -2109,9 +2086,9 @@ async def get_sales_performance_report(
                     Lead.status == 'Converted'
                 )
             ).all()
-            prev_revenue = sum(lead.opportunity_amount or 0 for lead in prev_converted_leads)
+            prev_revenue_user = sum(lead.opportunity_amount or 0 for lead in prev_converted_leads)
             
-            prev_activities = db.query(Communication).filter(
+            prev_activities_user = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
                     Communication.created_at >= prev_start_date,
@@ -2120,22 +2097,28 @@ async def get_sales_performance_report(
             ).count()
             
             # Add to totals
-            total_calls += calls_made
-            total_demos += demos_conducted
+            total_calls_dialed += calls_dialed
+            total_calls_answered += calls_answered
+            total_demos_scheduled += demos_scheduled
+            total_demos_completed += demos_completed
             total_revenue += revenue_generated
             total_activities += all_activities
             
-            prev_total_calls += prev_calls
-            prev_total_demos += prev_demos
-            prev_total_revenue += prev_revenue
-            prev_total_activities += prev_activities
+            prev_calls_dialed += prev_calls_dialed_user
+            prev_calls_answered += prev_calls_answered_user
+            prev_demos_scheduled += prev_demos_scheduled_user
+            prev_demos_completed += prev_demos_completed_user
+            prev_revenue += prev_revenue_user
+            prev_activities += prev_activities_user
             
             # Add to team performance
             team_performance.append({
                 'name': user.name,
                 'user_id': user.id,
-                'calls_made': calls_made,
-                'demos_conducted': demos_conducted,
+                'calls_dialed': calls_dialed,
+                'calls_answered': calls_answered,
+                'demos_scheduled': demos_scheduled,
+                'demos_completed': demos_completed,
                 'revenue_generated': round(revenue_generated, 2),
                 'activities': all_activities
             })
@@ -2149,10 +2132,12 @@ async def get_sales_performance_report(
                 return 100 if current > 0 else 0
             return round(((current - previous) / previous) * 100, 1)
         
-        calls_change = calculate_change(total_calls, prev_total_calls)
-        demos_change = calculate_change(total_demos, prev_total_demos)
-        revenue_change = calculate_change(total_revenue, prev_total_revenue)
-        activities_change = calculate_change(total_activities, prev_total_activities)
+        calls_dialed_change = calculate_change(total_calls_dialed, prev_calls_dialed)
+        calls_answered_change = calculate_change(total_calls_answered, prev_calls_answered)
+        demos_scheduled_change = calculate_change(total_demos_scheduled, prev_demos_scheduled)
+        demos_completed_change = calculate_change(total_demos_completed, prev_demos_completed)
+        revenue_change = calculate_change(total_revenue, prev_revenue)
+        activities_change = calculate_change(total_activities, prev_activities)
         
         return {
             'period': period,
@@ -2161,12 +2146,16 @@ async def get_sales_performance_report(
                 'end': end_date.isoformat()
             },
             'summary': {
-                'total_calls': total_calls,
-                'total_demos': total_demos,
+                'total_calls_dialed': total_calls_dialed,
+                'total_calls_answered': total_calls_answered,
+                'total_demos_scheduled': total_demos_scheduled,
+                'total_demos_completed': total_demos_completed,
                 'total_revenue': round(total_revenue, 2),
                 'total_activities': total_activities,
-                'calls_change': calls_change,
-                'demos_change': demos_change,
+                'calls_dialed_change': calls_dialed_change,
+                'calls_answered_change': calls_answered_change,
+                'demos_scheduled_change': demos_scheduled_change,
+                'demos_completed_change': demos_completed_change,
                 'revenue_change': revenue_change,
                 'activities_change': activities_change
             },
@@ -2182,10 +2171,42 @@ async def get_sales_performance_report(
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 
-# ============================================
-# OPTIONAL: Export Reports as CSV
-# ============================================
+# Keep the /users endpoint as is
+@app.get("/users")
+async def get_all_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of users for dropdown filters
+    - Admins see all sales managers
+    - Sales managers see only themselves
+    """
+    try:
+        if PermissionChecker.is_admin(current_user):
+            # Admin sees all sales managers
+            users = db.query(User).filter(User.role == UserRole.SALES_MANAGER).all()
+            return [{
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "role": u.role,
+                "is_active": u.is_active
+            } for u in users]
+        else:
+            # Sales manager sees only themselves
+            return [{
+                "id": current_user.id,
+                "name": current_user.name,
+                "email": current_user.email,
+                "role": current_user.role,
+                "is_active": current_user.is_active
+            }]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch users: {str(e)}")
 
+
+# Optional: Export endpoint
 @app.get("/reports/sales-performance/export")
 async def export_sales_performance_report(
     period: str = "weekly",
@@ -2203,14 +2224,21 @@ async def export_sales_performance_report(
     # Get the report data
     report_data = await get_sales_performance_report(period, user_id, date, current_user, db)
     
-    # Create CSV content
-    csv_content = "Sales Rep,Calls Made,Demos Conducted,Revenue Generated,Activities\n"
+    # Create CSV content with detailed columns
+    csv_content = "Sales Rep,Calls Dialed,Calls Answered,Answer Rate,Demos Scheduled,Demos Completed,Completion Rate,Revenue Generated,Activities\n"
     
     for member in report_data['team_performance']:
-        csv_content += f"{member['name']},{member['calls_made']},{member['demos_conducted']},{member['revenue_generated']},{member['activities']}\n"
+        answer_rate = member['calls_dialed'] > 0 and round((member['calls_answered'] / member['calls_dialed']) * 100, 1) or 0
+        completion_rate = member['demos_scheduled'] > 0 and round((member['demos_completed'] / member['demos_scheduled']) * 100, 1) or 0
+        
+        csv_content += f"{member['name']},{member['calls_dialed']},{member['calls_answered']},{answer_rate}%,{member['demos_scheduled']},{member['demos_completed']},{completion_rate}%,{member['revenue_generated']},{member['activities']}\n"
     
     # Add summary row
-    csv_content += f"\nSUMMARY,{report_data['summary']['total_calls']},{report_data['summary']['total_demos']},{report_data['summary']['total_revenue']},{report_data['summary']['total_activities']}\n"
+    summary = report_data['summary']
+    total_answer_rate = summary['total_calls_dialed'] > 0 and round((summary['total_calls_answered'] / summary['total_calls_dialed']) * 100, 1) or 0
+    total_completion_rate = summary['total_demos_scheduled'] > 0 and round((summary['total_demos_completed'] / summary['total_demos_scheduled']) * 100, 1) or 0
+    
+    csv_content += f"\nTOTAL,{summary['total_calls_dialed']},{summary['total_calls_answered']},{total_answer_rate}%,{summary['total_demos_scheduled']},{summary['total_demos_completed']},{total_completion_rate}%,{summary['total_revenue']},{summary['total_activities']}\n"
     
     # Create streaming response
     return StreamingResponse(
