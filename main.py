@@ -378,6 +378,9 @@ async def create_sales_manager(
     """Create sales manager (Admin only)"""
     try:
         sales_manager = RoleManager.create_sales_manager(db, sales_data, current_user.id)
+
+        TimelineLogger.log_user_created(db, current_user, sales_manager)
+
         return {
             "message": f"Sales manager {sales_manager.name} created successfully",
             "user_id": sales_manager.id
@@ -417,23 +420,34 @@ async def update_sales_manager(
         if not manager:
             raise HTTPException(status_code=404, detail="Sales manager not found")
         
-        # Update fields
-        if 'name' in update_data:
+        # ✅ FIXED: Track changes
+        changed_fields = {}
+        
+        if 'name' in update_data and update_data['name'] != manager.name:
+            changed_fields['name'] = {"old": manager.name, "new": update_data['name']}
             manager.name = update_data['name']
+            
         if 'email' in update_data:
-            # Check if email is already taken by another user
             existing = db.query(User).filter(
                 User.email == update_data['email'],
                 User.id != user_id
             ).first()
             if existing:
                 raise HTTPException(status_code=400, detail="Email already in use")
-            manager.email = update_data['email']
-        if 'monthly_target' in update_data:
+            if update_data['email'] != manager.email:
+                changed_fields['email'] = {"old": manager.email, "new": update_data['email']}
+                manager.email = update_data['email']
+                
+        if 'monthly_target' in update_data and update_data['monthly_target'] != manager.monthly_target:
+            changed_fields['monthly_target'] = {"old": manager.monthly_target, "new": update_data['monthly_target']}
             manager.monthly_target = update_data['monthly_target']
         
-        db.commit()
-        db.refresh(manager)
+        if changed_fields:
+            db.commit()
+            db.refresh(manager)
+            
+            # ✅ ADD: Timeline logging
+            TimelineLogger.log_user_updated(db, current_user, manager, changed_fields)
         
         return {
             "message": "Sales manager updated successfully",
@@ -450,6 +464,39 @@ async def update_sales_manager(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+# @app.delete("/sales-managers/{user_id}")
+# async def delete_sales_manager(
+#     user_id: int,
+#     current_user: User = Depends(require_admin),
+#     db: Session = Depends(get_db)
+# ):
+#     """Delete sales manager (Admin only)"""
+#     try:
+#         manager = db.query(User).filter(
+#             User.id == user_id,
+#             User.role == UserRole.SALES_MANAGER
+#         ).first()
+        
+#         if not manager:
+#             raise HTTPException(status_code=404, detail="Sales manager not found")
+        
+#         # Check if manager has assigned leads
+#         assigned_leads = db.query(Lead).filter(Lead.assigned_to == user_id).count()
+#         if assigned_leads > 0:
+#             raise HTTPException(
+#                 status_code=400, 
+#                 detail=f"Cannot delete manager with {assigned_leads} assigned leads. Please reassign them first."
+#             )
+        
+#         db.delete(manager)
+#         db.commit()
+        
+#         return {"message": "Sales manager deleted successfully"}
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=500, detail=str(e))
 @app.delete("/sales-managers/{user_id}")
 async def delete_sales_manager(
     user_id: int,
@@ -466,20 +513,23 @@ async def delete_sales_manager(
         if not manager:
             raise HTTPException(status_code=404, detail="Sales manager not found")
         
-        # Check if manager has assigned leads
         assigned_leads = db.query(Lead).filter(Lead.assigned_to == user_id).count()
         if assigned_leads > 0:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Cannot delete manager with {assigned_leads} assigned leads. Please reassign them first."
+                detail=f"Cannot delete manager with {assigned_leads} assigned leads"
             )
+        
+        # ✅ FIXED: Store data BEFORE deletion
+        manager_name = manager.name
         
         db.delete(manager)
         db.commit()
         
+        # ✅ ADD: Timeline logging
+        TimelineLogger.log_user_deleted(db, current_user, user_id, manager_name)
+        
         return {"message": "Sales manager deleted successfully"}
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -589,8 +639,9 @@ async def create_communication(
         db.refresh(new_comm)
 
         # Log timeline action
-        TimelineLogger.log_communication_created(db, current_user, lead, new_comm)
-        
+        lead_name = f"{lead.first_name} {lead.last_name}"
+        TimelineLogger.log_communication_created(db, current_user, new_comm, lead_name)  
+
         return {
             'id': new_comm.id,
             'lead_id': new_comm.lead_id,
@@ -1010,6 +1061,19 @@ async def delete_attachment(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
+# @app.put("/sales-managers/{user_id}/activate")
+# async def activate_sales_manager(
+#     user_id: int,
+#     current_user: User = Depends(require_admin),
+#     db: Session = Depends(get_db)
+# ):
+#     """Activate sales manager"""
+#     try:
+#         RoleManager.activate_user(db, user_id, current_user.id)
+#         return {"message": "Sales manager activated successfully"}
+#     except ValueError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
+
 @app.put("/sales-managers/{user_id}/activate")
 async def activate_sales_manager(
     user_id: int,
@@ -1018,11 +1082,22 @@ async def activate_sales_manager(
 ):
     """Activate sales manager"""
     try:
-        RoleManager.activate_user(db, user_id, current_user.id)
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user.is_active = True
+        db.commit()
+        db.refresh(user)
+        
+        # ✅ ADD: Timeline logging
+        TimelineLogger.log_user_activated(db, current_user, user)
+        
         return {"message": "Sales manager activated successfully"}
-    except ValueError as e:
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
-
+    
 @app.put("/sales-managers/{user_id}/deactivate")
 async def deactivate_sales_manager(
     user_id: int,
@@ -1031,10 +1106,34 @@ async def deactivate_sales_manager(
 ):
     """Deactivate sales manager"""
     try:
-        RoleManager.deactivate_user(db, user_id, current_user.id)
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user.is_active = False
+        db.commit()
+        db.refresh(user)
+        
+        # ✅ ADD: Timeline logging
+        TimelineLogger.log_user_deactivated(db, current_user, user)
+        
         return {"message": "Sales manager deactivated successfully"}
-    except ValueError as e:
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+# @app.put("/sales-managers/{user_id}/deactivate")
+# async def deactivate_sales_manager(
+#     user_id: int,
+#     current_user: User = Depends(require_admin),
+#     db: Session = Depends(get_db)
+# ):
+#     """Deactivate sales manager"""
+#     try:
+#         RoleManager.deactivate_user(db, user_id, current_user.id)
+#         return {"message": "Sales manager deactivated successfully"}
+#     except ValueError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
 
 # Updated endpoints for main.py - Fixed enum handling
 
@@ -1078,8 +1177,8 @@ async def create_lead(
         db.refresh(new_lead)
 
         # ADD THIS: Log timeline action
-        TimelineLogger.log_lead_created(db, current_user, new_lead)
-        
+        TimelineLogger.log_lead_created(db, current_user, new_lead)      
+
         # Return the created lead as a dictionary
         return {
             "id": new_lead.id,
@@ -1190,6 +1289,8 @@ async def update_lead(
         
         # Track changes
         changed_fields = {}
+        old_status = lead.status  # Store old status for status change logging
+        old_assigned_to = lead.assigned_to  # Store old assignment
 
         # Check permissions
         if not PermissionChecker.is_admin(current_user):
@@ -1215,6 +1316,22 @@ async def update_lead(
         # ADD THIS: Log timeline action only if something changed
         if changed_fields:
             TimelineLogger.log_lead_updated(db, current_user, lead, changed_fields)
+
+        # Log status change separately if status was changed
+        if 'status' in changed_fields:
+            TimelineLogger.log_lead_status_change(
+                db, 
+                current_user, 
+                lead, 
+                changed_fields['status']['old'], 
+                changed_fields['status']['new']
+            )
+        
+        # Log assignment if assigned_to was changed
+        if 'assigned_to' in changed_fields and lead.assigned_to:
+            assigned_user = db.query(User).filter(User.id == lead.assigned_to).first()
+            if assigned_user:
+                TimelineLogger.log_lead_assigned(db, current_user, lead, assigned_user.name)
         
         # Return updated lead
         return {
@@ -1795,6 +1912,11 @@ async def reschedule_meeting(
         
         db.commit()
         db.refresh(communication)
+
+        # ✅ ADD: Timeline logging
+        lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
+        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
+        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "rescheduled")
         
         return {
             'id': communication.id,
@@ -1839,6 +1961,12 @@ async def cancel_meeting(
         
         db.commit()
         db.refresh(communication)
+
+        # ✅ ADD: Timeline logging
+        lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
+        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
+        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "cancelled")
+        
         
         # TODO: If Google Calendar integration, cancel the calendar event here
         # if communication.google_event_id:
@@ -1880,6 +2008,11 @@ async def mark_meeting_complete(
         
         db.commit()
         db.refresh(communication)
+
+        # ✅ ADD: Timeline logging
+        lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
+        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
+        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "completed")
         
         return {
             'id': communication.id,
@@ -2107,12 +2240,14 @@ async def delete_lead(
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
         
+        lead_name = f"{lead.first_name} {lead.last_name}"
+        
         # Hard delete - permanently remove from database
         db.delete(lead)
         db.commit()
 
         # Log timeline action
-        TimelineLogger.log_lead_deleted(db, current_user, lead)
+        TimelineLogger.log_lead_deleted(db, current_user, lead_id, lead_name)
 
         return {
             "message": "Lead deleted successfully",
@@ -2515,8 +2650,10 @@ async def update_communication(
         db.refresh(comm)
 
         # Log timeline action
-        TimelineLogger.log_communication_updated(db, current_user, comm, changed_fields)
-        changed_fields = update_data.dict(exclude_unset=True).keys()
+        lead = db.query(Lead).filter(Lead.id == comm.lead_id).first()
+        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
+        TimelineLogger.log_communication_updated(db, current_user, comm, lead_name, "updated")
+
         return {
             'id': comm.id,
             'lead_id': comm.lead_id,
@@ -2561,8 +2698,17 @@ async def delete_communication(
         if comm.user_id != current_user.id and not PermissionChecker.is_admin(current_user):
             raise HTTPException(status_code=403, detail="You don't have permission to delete this communication")
         
+        lead = db.query(Lead).filter(Lead.id == comm.lead_id).first()
+        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
+        comm_id = comm.id
+        comm_type = comm.type
+        subject = comm.subject
+        
         db.delete(comm)
         db.commit()
+
+        TimelineLogger.log_communication_deleted(db, current_user, comm_id, comm_type, subject, lead_name)
+
         
         return {"message": "Communication deleted successfully"}
         
