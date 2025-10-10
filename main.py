@@ -2592,11 +2592,11 @@ async def export_sales_performance_report(
         }
     )
     
-
-# Add this endpoint to your main.py file
+# with this improved version that explicitly handles all roles including SALES_REP
 
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 
 # Pydantic model for updating communication
 class CommunicationUpdate(BaseModel):
@@ -2615,6 +2615,11 @@ async def update_communication(
 ):
     """
     Update a communication (call, email, meeting, etc.)
+    
+    Permissions:
+    - ADMIN: Can edit any communication
+    - SALES_MANAGER: Can edit their own communications
+    - SALES_REP: Can edit their own communications
     """
     try:
         # Get the communication
@@ -2623,9 +2628,15 @@ async def update_communication(
         if not comm:
             raise HTTPException(status_code=404, detail="Communication not found")
         
-        # Check permissions - user must be the creator or an admin
-        if comm.user_id != current_user.id and not PermissionChecker.is_admin(current_user):
-            raise HTTPException(status_code=403, detail="You don't have permission to edit this communication")
+        # ✅ SIMPLIFIED PERMISSION CHECK - Works for all roles
+        # User can edit if they created it OR if they're an admin
+        can_edit = (comm.user_id == current_user.id) or PermissionChecker.is_admin(current_user)
+        
+        if not can_edit:
+            raise HTTPException(
+                status_code=403, 
+                detail="You don't have permission to edit this communication"
+            )
         
         # Update fields if provided
         if update_data.subject is not None:
@@ -2675,7 +2686,6 @@ async def update_communication(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to update communication: {str(e)}")
-
 
 # Optional: Delete communication endpoint
 @app.delete("/communications/{communication_id}")
