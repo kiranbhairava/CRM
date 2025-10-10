@@ -7,10 +7,11 @@ from datetime import datetime
 import os
 from dotenv import load_dotenv
 import base64, json
+from timeline_helper import TimelineLogger
 
 # Import from our existing modules
 from roles import User, UserRole, UserCreate, UserLogin, SalesManagerCreate, RoleManager, PermissionChecker, Base as RoleBase
-from models import Lead, LeadCreate, LeadUpdate, LeadSource, LeadStatus, FileAttachment
+from models import Lead, LeadCreate, LeadUpdate, LeadSource, LeadStatus, FileAttachment, ActionTimeline
 from google_integration import GoogleWorkspaceManager, CalendarManager, GmailManager
 from models import GoogleToken, Communication
 import json
@@ -176,6 +177,197 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "monthly_target": current_user.monthly_target,
         "is_active": current_user.is_active
     }
+
+# ============================================
+# TIMELINE ENDPOINTS - Add these to main.py
+# ============================================
+
+from typing import Optional, List
+from pydantic import BaseModel
+from datetime import datetime, timedelta
+
+class TimelineFilter(BaseModel):
+    """Filter parameters for timeline"""
+    entity_type: Optional[str] = None  # 'lead', 'communication', 'user'
+    entity_id: Optional[int] = None
+    action_type: Optional[str] = None  # 'CREATE', 'UPDATE', 'DELETE', etc.
+    user_id: Optional[int] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    limit: Optional[int] = 50
+
+class TimelineResponse(BaseModel):
+    """Response model for timeline entries"""
+    id: int
+    user_id: int
+    user_name: str
+    action_type: str
+    entity_type: str
+    entity_id: int
+    description: str
+    details: Optional[dict] = None
+    created_at: datetime
+
+@app.get("/timeline")
+async def get_timeline(
+    entity_type: Optional[str] = None,
+    entity_id: Optional[int] = None,
+    action_type: Optional[str] = None,
+    user_id: Optional[int] = None,
+    days: Optional[int] = 30,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get timeline of all actions
+    Admins see everything, Sales Managers see only their actions
+    """
+    try:
+        query = db.query(ActionTimeline)
+        
+        # Filter by date range (last N days)
+        if days:
+            start_date = datetime.utcnow() - timedelta(days=days)
+            query = query.filter(ActionTimeline.created_at >= start_date)
+        
+        # Filter by entity type (lead, communication, user, etc.)
+        if entity_type:
+            query = query.filter(ActionTimeline.entity_type == entity_type)
+        
+        # Filter by specific entity
+        if entity_id:
+            query = query.filter(ActionTimeline.entity_id == entity_id)
+        
+        # Filter by action type (CREATE, UPDATE, DELETE, etc.)
+        if action_type:
+            query = query.filter(ActionTimeline.action_type == action_type)
+        
+        # Filter by user (who performed the action)
+        if user_id:
+            query = query.filter(ActionTimeline.user_id == user_id)
+        
+        # Role-based filtering
+        if not PermissionChecker.is_admin(current_user):
+            # Sales managers only see their own actions and actions on their leads
+            query = query.filter(ActionTimeline.user_id == current_user.id)
+        
+        # Order by most recent first
+        query = query.order_by(ActionTimeline.created_at.desc())
+        
+        # Limit results
+        timeline_entries = query.limit(limit).all()
+        
+        return [{
+            'id': entry.id,
+            'user_id': entry.user_id,
+            'user_name': entry.user_name,
+            'action_type': entry.action_type,
+            'entity_type': entry.entity_type,
+            'entity_id': entry.entity_id,
+            'description': entry.description,
+            'details': entry.details,
+            'created_at': entry.created_at
+        } for entry in timeline_entries]
+        
+    except Exception as e:
+        print(f"Error fetching timeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch timeline: {str(e)}")
+
+@app.get("/timeline/lead/{lead_id}")
+async def get_lead_timeline(
+    lead_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get timeline for a specific lead"""
+    try:
+        # Verify lead exists and user has access
+        lead = db.query(Lead).filter(Lead.id == lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        
+        # Check permissions
+        if not PermissionChecker.is_admin(current_user) and lead.assigned_to != current_user.id:
+            raise HTTPException(status_code=403, detail="You don't have access to this lead's timeline")
+        
+        # Get all timeline entries for this lead
+        timeline_entries = db.query(ActionTimeline).filter(
+            ActionTimeline.entity_type == 'lead',
+            ActionTimeline.entity_id == lead_id
+        ).order_by(ActionTimeline.created_at.desc()).all()
+        
+        return [{
+            'id': entry.id,
+            'user_id': entry.user_id,
+            'user_name': entry.user_name,
+            'action_type': entry.action_type,
+            'entity_type': entry.entity_type,
+            'entity_id': entry.entity_id,
+            'description': entry.description,
+            'details': entry.details,
+            'created_at': entry.created_at
+        } for entry in timeline_entries]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching lead timeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch lead timeline: {str(e)}")
+
+@app.get("/timeline/stats")
+async def get_timeline_stats(
+    days: int = 7,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get timeline statistics"""
+    try:
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        query = db.query(ActionTimeline).filter(ActionTimeline.created_at >= start_date)
+        
+        # Filter for sales managers
+        if not PermissionChecker.is_admin(current_user):
+            query = query.filter(ActionTimeline.user_id == current_user.id)
+        
+        all_entries = query.all()
+        
+        # Calculate stats
+        stats = {
+            'total_actions': len(all_entries),
+            'by_action_type': {},
+            'by_entity_type': {},
+            'by_day': {},
+            'most_active_users': {}
+        }
+        
+        for entry in all_entries:
+            # Count by action type
+            stats['by_action_type'][entry.action_type] = stats['by_action_type'].get(entry.action_type, 0) + 1
+            
+            # Count by entity type
+            stats['by_entity_type'][entry.entity_type] = stats['by_entity_type'].get(entry.entity_type, 0) + 1
+            
+            # Count by day
+            day_key = entry.created_at.strftime('%Y-%m-%d')
+            stats['by_day'][day_key] = stats['by_day'].get(day_key, 0) + 1
+            
+            # Count by user
+            stats['most_active_users'][entry.user_name] = stats['most_active_users'].get(entry.user_name, 0) + 1
+        
+        # Sort most active users
+        stats['most_active_users'] = dict(sorted(
+            stats['most_active_users'].items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )[:10])
+        
+        return stats
+        
+    except Exception as e:
+        print(f"Error fetching timeline stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch timeline stats: {str(e)}")
 
 @app.post("/sales-managers")
 async def create_sales_manager(
@@ -395,6 +587,9 @@ async def create_communication(
         db.add(new_comm)
         db.commit()
         db.refresh(new_comm)
+
+        # Log timeline action
+        TimelineLogger.log_communication_created(db, current_user, lead, new_comm)
         
         return {
             'id': new_comm.id,
@@ -881,6 +1076,9 @@ async def create_lead(
         db.add(new_lead)
         db.commit()
         db.refresh(new_lead)
+
+        # ADD THIS: Log timeline action
+        TimelineLogger.log_lead_created(db, current_user, new_lead)
         
         # Return the created lead as a dictionary
         return {
@@ -989,6 +1187,9 @@ async def update_lead(
         lead = db.query(Lead).filter(Lead.id == lead_id).first()
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
+        
+        # Track changes
+        changed_fields = {}
 
         # Check permissions
         if not PermissionChecker.is_admin(current_user):
@@ -1010,6 +1211,10 @@ async def update_lead(
 
         db.commit()
         db.refresh(lead)
+
+        # ADD THIS: Log timeline action only if something changed
+        if changed_fields:
+            TimelineLogger.log_lead_updated(db, current_user, lead, changed_fields)
         
         # Return updated lead
         return {
@@ -1905,7 +2110,10 @@ async def delete_lead(
         # Hard delete - permanently remove from database
         db.delete(lead)
         db.commit()
-        
+
+        # Log timeline action
+        TimelineLogger.log_lead_deleted(db, current_user, lead)
+
         return {
             "message": "Lead deleted successfully",
             "lead_id": lead_id
@@ -2305,7 +2513,10 @@ async def update_communication(
         
         db.commit()
         db.refresh(comm)
-        
+
+        # Log timeline action
+        TimelineLogger.log_communication_updated(db, current_user, comm, changed_fields)
+        changed_fields = update_data.dict(exclude_unset=True).keys()
         return {
             'id': comm.id,
             'lead_id': comm.lead_id,
@@ -2363,6 +2574,8 @@ async def delete_communication(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to delete communication: {str(e)}")
+    
+
 # Add this endpoint to main.py (after your communications endpoints)
 
 # @app.get("/leads/{lead_id}/activities")
