@@ -16,6 +16,9 @@ from google_integration import GoogleWorkspaceManager, CalendarManager, GmailMan
 from models import GoogleToken, Communication
 import json
 load_dotenv()
+from external_website_leads_sync import router as external_leads_router
+from database import engine, SessionLocal, get_db
+
 
 # Configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://user:password@localhost/edtech_crm")
@@ -70,17 +73,19 @@ app.add_middleware(
 )
 
 # Database dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# def get_db():
+#     db = SessionLocal()
+#     try:
+#         yield db
+#     finally:
+#         db.close()
 
 # Create tables on startup
 @app.on_event("startup")
 def on_startup():
     create_tables()
+
+app.include_router(external_leads_router)
 
 # Simple auth helpers (without circular imports)
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
