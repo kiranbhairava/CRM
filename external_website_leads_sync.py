@@ -255,7 +255,7 @@ async def get_sync_status(db: Session = Depends(get_db)):
         # Count pending leads in external DB
         external_conn = external_engine.connect()
         pending = external_conn.execute(
-            text("SELECT COUNT(*) FROM website_leads WHERE id > :last_id"),
+            text("SELECT COUNT(*) FROM Resumes WHERE id > :last_id"),
             {"last_id": last_id}
         ).scalar()
         
