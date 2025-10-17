@@ -611,6 +611,7 @@ class CommunicationCreate(BaseModel):
     call_type: Optional[str] = None  # 'Inbound' or 'Outbound'
     call_duration: Optional[int] = None  # in minutes
     lead_status: Optional[str] = None  # New lead status after call
+    feedback: Optional[str] = None 
 
 @app.post("/leads/{lead_id}/communications")
 async def create_communication(
@@ -636,6 +637,7 @@ async def create_communication(
             scheduled_at=comm_data.scheduled_at,
             completed_at=comm_data.completed_at,
             status=comm_data.status or 'pending',
+            feedback=comm_data.feedback,
             created_at=datetime.utcnow()
         )
         
@@ -656,6 +658,7 @@ async def create_communication(
             'scheduled_at': new_comm.scheduled_at,
             'completed_at': new_comm.completed_at,
             'status': new_comm.status,
+            'feedback': new_comm.feedback,
             'created_at': new_comm.created_at,
             'message': f'{comm_data.type.capitalize()} logged successfully'
         }
