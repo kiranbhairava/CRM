@@ -1989,14 +1989,21 @@ async def cancel_meeting(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to cancel meeting: {str(e)}")
     
+from pydantic import BaseModel
+from typing import Optional
+
+# Simple model for meeting completion with feedback
+class MeetingComplete(BaseModel):
+    feedback: Optional[str] = None
 
 @app.put("/communications/{communication_id}/complete")
 async def mark_meeting_complete(
     communication_id: int,
+    meeting_data: Optional[MeetingComplete] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Mark a meeting as completed"""
+    """Mark a meeting as completed with optional feedback"""
     try:
         # Get the communication record
         communication = db.query(Communication).filter(
@@ -2009,12 +2016,16 @@ async def mark_meeting_complete(
         
         # Update to completed
         communication.status = 'completed'
-        communication.completed_at = convert_to_ist(datetime.utcnow())
+        communication.completed_at = datetime.utcnow()
+        
+        # Add feedback if provided
+        if meeting_data and meeting_data.feedback:
+            communication.feedback = meeting_data.feedback
         
         db.commit()
         db.refresh(communication)
 
-        # ✅ ADD: Timeline logging
+        # Timeline logging
         lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
         lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
         TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "completed")
@@ -2022,15 +2033,13 @@ async def mark_meeting_complete(
         return {
             'id': communication.id,
             'status': communication.status,
-            'completed_at': communication.completed_at,
-            'message': 'Meeting marked as completed'
+            'feedback': communication.feedback,
+            'message': 'Meeting completed successfully'
         }
         
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to update meeting: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to complete meeting: {str(e)}")
     
 
 @app.get("/google/calendar/events")

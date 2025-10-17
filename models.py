@@ -79,6 +79,7 @@ class Communication(Base):
     scheduled_at = Column(DateTime)
     completed_at = Column(DateTime)
     status = Column(String(50))  # scheduled, completed, cancelled
+    feedback = Column(Text, nullable=True)  # New field to store admin feedback
     google_event_id = Column(String(500))
     google_message_id = Column(String(500))
     meet_link = Column(String(1000))
