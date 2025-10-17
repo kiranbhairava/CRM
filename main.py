@@ -1,5 +1,5 @@
 # main.py - EdTech CRM using existing modules
-from django import db
+# from django import db
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
