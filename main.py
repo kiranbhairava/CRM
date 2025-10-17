@@ -2214,24 +2214,40 @@ async def get_lead_communications(
     db: Session = Depends(get_db)
 ):
     """Get all communications for a lead"""
+    # Verify lead exists
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Check if user has access to this lead
+    if current_user.role != UserRole.ADMIN and lead.assigned_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this lead")
+
+    # Get communications
     communications = db.query(Communication).filter(
         Communication.lead_id == lead_id
     ).order_by(Communication.created_at.desc()).all()
-    
-    return [{
-        'id': c.id,
-        'type': c.type,
-        'subject': c.subject,
-        'content': c.content,
-        'scheduled_at': c.scheduled_at,
-        'completed_at': c.completed_at,
-        'status': c.status,
-        'meet_link': c.meet_link,
-        'created_at': c.created_at,
-        'user_id': c.user_id,
-    } for c in communications]
 
-# Add this to your main.py file
+    result = []
+    for comm in communications:
+        # Include the feedback field in the response
+        result.append({
+            "id": comm.id,
+            "type": comm.type,
+            "subject": comm.subject,
+            "content": comm.content,
+            "scheduled_at": comm.scheduled_at,
+            "completed_at": comm.completed_at,
+            "status": comm.status,
+            "meet_link": comm.meet_link,
+            "google_event_id": comm.google_event_id,
+            "google_message_id": comm.google_message_id,
+            "feedback": comm.feedback,  # Add this line to include the feedback field
+            "created_at": comm.created_at,
+            "user_id": comm.user_id
+        })
+
+    return result
 
 @app.delete("/leads/{lead_id}")
 async def delete_lead(
