@@ -1,4 +1,5 @@
 # main.py - EdTech CRM using existing modules
+from django import db
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
@@ -1924,7 +1925,17 @@ async def reschedule_meeting(
         # ✅ ADD: Timeline logging
         lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
         lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
-        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "rescheduled")
+        changes = {
+            "status": {
+                "old": communication.status,
+                "new": "rescheduled"
+            },
+            "scheduled_at": {
+                "old": str(old_date),
+                "new": str(new_start_time)
+            }
+        }
+        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, changes)
         
         return {
             'id': communication.id,
@@ -1973,7 +1984,14 @@ async def cancel_meeting(
         # ✅ ADD: Timeline logging
         lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
         lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
-        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "cancelled")
+        changes = {
+            "status": {
+                "old": communication.status,
+                "new": "cancelled"
+            }
+        }
+        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, changes)
+
         
         
         # TODO: If Google Calendar integration, cancel the calendar event here
@@ -1999,6 +2017,7 @@ from typing import Optional
 class MeetingComplete(BaseModel):
     feedback: Optional[str] = None
 
+# Modified mark_meeting_complete endpoint to restrict to admin only
 @app.put("/communications/{communication_id}/complete")
 async def mark_meeting_complete(
     communication_id: int,
@@ -2006,7 +2025,7 @@ async def mark_meeting_complete(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Mark a meeting as completed with optional feedback"""
+    """Mark a meeting as completed with optional feedback (Admin only)"""
     try:
         # Get the communication record
         communication = db.query(Communication).filter(
@@ -2016,6 +2035,17 @@ async def mark_meeting_complete(
         
         if not communication:
             raise HTTPException(status_code=404, detail="Meeting not found")
+        
+        # Check if user is admin
+        is_admin = PermissionChecker.is_admin(current_user)
+        is_creator = communication.user_id == current_user.id
+        
+        # Only allow marking as complete if user is admin
+        if not is_admin:
+            raise HTTPException(
+                status_code=403, 
+                detail="Only admins can mark meetings as complete and provide feedback"
+            )
         
         # Update to completed
         communication.status = 'completed'
@@ -2031,7 +2061,14 @@ async def mark_meeting_complete(
         # Timeline logging
         lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
         lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
-        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, "completed")
+        changes = {
+            "status": {
+                "old": communication.status,
+                "new": "completed"
+            }
+        }
+        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, changes)
+
         
         return {
             'id': communication.id,
@@ -2042,8 +2079,7 @@ async def mark_meeting_complete(
         
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to complete meeting: {str(e)}")
-    
+        raise HTTPException(status_code=500, detail=f"Failed to complete meeting: {str(e)}")    
 
 @app.get("/google/calendar/events")
 async def get_calendar_events(
@@ -2696,7 +2732,14 @@ async def update_communication(
         # Log timeline action
         lead = db.query(Lead).filter(Lead.id == comm.lead_id).first()
         lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
-        TimelineLogger.log_communication_updated(db, current_user, comm, lead_name, "updated")
+        changes = {
+            "status": {
+                "old": "pending",  # Use the previous status if available
+                "new": comm.status
+            }
+        }
+        TimelineLogger.log_communication_updated(db, current_user, comm, lead_name, changes)
+
 
         return {
             'id': comm.id,
