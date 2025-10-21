@@ -2330,8 +2330,6 @@ async def delete_lead(
         print(f"Error deleting lead: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete lead: {str(e)}")
 
-# Replace the /reports/sales-performance endpoint in your main.py with this updated version
-
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_
 from typing import Optional
@@ -2465,6 +2463,26 @@ async def get_sales_performance_report(
                     Communication.created_at < end_date
                 )
             ).count()
+
+            # Calculate talk time from calls
+            total_talk_time = 0
+            for call in all_calls:
+                if call.status and call.status.lower() in ['completed', 'held']:
+                    # Extract duration using regex
+                    import re
+                    if call.content:
+                        match = re.search(r'Duration: (\d+)', call.content)
+                        if match:
+                            total_talk_time += int(match.group(1))
+
+             # Previous period talk time
+            prev_talk_time = 0
+            for call in prev_all_calls:
+                if call.status and call.status.lower() in ['completed', 'held']:
+                    if call.content:
+                        match = re.search(r'Duration: (\d+)', call.content)
+                        if match:
+                            prev_talk_time += int(match.group(1))
             
             # ===== PREVIOUS PERIOD =====
             
@@ -2532,9 +2550,16 @@ async def get_sales_performance_report(
                 'demos_scheduled': demos_scheduled,
                 'demos_completed': demos_completed,
                 'revenue_generated': round(revenue_generated, 2),
-                'activities': all_activities
+                'activities': all_activities,
+                'talk_time': total_talk_time  
             })
+
+            # Track totals
+            total_talk_time_all = sum(member['talk_time'] for member in team_performance)
+            prev_talk_time_all = sum(prev_talk_time)  # Simplified - you may need to adjust based on your data structure
         
+        talk_time_change = calculate_change(total_talk_time_all, prev_talk_time_all)
+
         # Sort team performance by revenue (descending)
         team_performance.sort(key=lambda x: x['revenue_generated'], reverse=True)
         
@@ -2569,7 +2594,9 @@ async def get_sales_performance_report(
                 'demos_scheduled_change': demos_scheduled_change,
                 'demos_completed_change': demos_completed_change,
                 'revenue_change': revenue_change,
-                'activities_change': activities_change
+                'activities_change': activities_change,
+                'total_talk_time': total_talk_time_all,
+                'talk_time_change': talk_time_change
             },
             'team_performance': team_performance
         }
