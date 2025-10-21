@@ -2401,6 +2401,7 @@ async def get_sales_performance_report(
         total_demos_completed = 0
         total_revenue = 0
         total_activities = 0
+        total_talk_time_all = 0  # New: Initialize total talk time
         
         # Previous period metrics
         prev_calls_dialed = 0
@@ -2409,6 +2410,7 @@ async def get_sales_performance_report(
         prev_demos_completed = 0
         prev_revenue = 0
         prev_activities = 0
+        prev_talk_time_all = 0  # New: Initialize previous talk time
         
         team_performance = []
         
@@ -2427,9 +2429,18 @@ async def get_sales_performance_report(
             
             calls_dialed = len(all_calls)
             
-            # Count calls that were answered (status: 'completed', 'held', or similar success indicators)
-            # Adjust these status values based on your actual data
+            # Count calls that were answered
             calls_answered = len([c for c in all_calls if c.status and c.status.lower() in ['completed', 'held', 'answered', 'successful']])
+            
+            # New: Calculate talk time
+            total_talk_time = 0
+            for call in all_calls:
+                if call.status and call.status.lower() in ['completed', 'held', 'answered', 'successful']:
+                    if call.content:
+                        import re
+                        match = re.search(r'Duration: (\d+)', call.content)
+                        if match:
+                            total_talk_time += int(match.group(1))
             
             # Get all demos/meetings
             all_demos = db.query(Communication).filter(
@@ -2463,29 +2474,10 @@ async def get_sales_performance_report(
                     Communication.created_at < end_date
                 )
             ).count()
-
-            # Calculate talk time from calls
-            total_talk_time = 0
-            for call in all_calls:
-                if call.status and call.status.lower() in ['completed', 'held']:
-                    # Extract duration using regex
-                    import re
-                    if call.content:
-                        match = re.search(r'Duration: (\d+)', call.content)
-                        if match:
-                            total_talk_time += int(match.group(1))
-
-             # Previous period talk time
-            prev_talk_time = 0
-            for call in prev_all_calls:
-                if call.status and call.status.lower() in ['completed', 'held']:
-                    if call.content:
-                        match = re.search(r'Duration: (\d+)', call.content)
-                        if match:
-                            prev_talk_time += int(match.group(1))
             
             # ===== PREVIOUS PERIOD =====
             
+            # Get previous period calls - DEFINE BEFORE USING
             prev_all_calls = db.query(Communication).filter(
                 and_(
                     Communication.user_id == user.id,
@@ -2497,6 +2489,16 @@ async def get_sales_performance_report(
             
             prev_calls_dialed_user = len(prev_all_calls)
             prev_calls_answered_user = len([c for c in prev_all_calls if c.status and c.status.lower() in ['completed', 'held', 'answered', 'successful']])
+            
+            # New: Calculate previous period talk time
+            prev_talk_time_user = 0
+            for call in prev_all_calls:
+                if call.status and call.status.lower() in ['completed', 'held', 'answered', 'successful']:
+                    if call.content:
+                        import re
+                        match = re.search(r'Duration: (\d+)', call.content)
+                        if match:
+                            prev_talk_time_user += int(match.group(1))
             
             prev_all_demos = db.query(Communication).filter(
                 and_(
@@ -2533,6 +2535,7 @@ async def get_sales_performance_report(
             total_demos_completed += demos_completed
             total_revenue += revenue_generated
             total_activities += all_activities
+            total_talk_time_all += total_talk_time  # New: Add to total talk time
             
             prev_calls_dialed += prev_calls_dialed_user
             prev_calls_answered += prev_calls_answered_user
@@ -2540,6 +2543,7 @@ async def get_sales_performance_report(
             prev_demos_completed += prev_demos_completed_user
             prev_revenue += prev_revenue_user
             prev_activities += prev_activities_user
+            prev_talk_time_all += prev_talk_time_user  # New: Add to previous total talk time
             
             # Add to team performance
             team_performance.append({
@@ -2551,15 +2555,9 @@ async def get_sales_performance_report(
                 'demos_completed': demos_completed,
                 'revenue_generated': round(revenue_generated, 2),
                 'activities': all_activities,
-                'talk_time': total_talk_time  
+                'talk_time': total_talk_time  # New: Include talk time in team performance
             })
-
-            # Track totals
-            total_talk_time_all = sum(member['talk_time'] for member in team_performance)
-            prev_talk_time_all = sum(prev_talk_time)  # Simplified - you may need to adjust based on your data structure
         
-        talk_time_change = calculate_change(total_talk_time_all, prev_talk_time_all)
-
         # Sort team performance by revenue (descending)
         team_performance.sort(key=lambda x: x['revenue_generated'], reverse=True)
         
@@ -2575,6 +2573,7 @@ async def get_sales_performance_report(
         demos_completed_change = calculate_change(total_demos_completed, prev_demos_completed)
         revenue_change = calculate_change(total_revenue, prev_revenue)
         activities_change = calculate_change(total_activities, prev_activities)
+        talk_time_change = calculate_change(total_talk_time_all, prev_talk_time_all)  # New: Calculate talk time change
         
         return {
             'period': period,
@@ -2589,14 +2588,14 @@ async def get_sales_performance_report(
                 'total_demos_completed': total_demos_completed,
                 'total_revenue': round(total_revenue, 2),
                 'total_activities': total_activities,
+                'total_talk_time': total_talk_time_all,  # New: Include total talk time
                 'calls_dialed_change': calls_dialed_change,
                 'calls_answered_change': calls_answered_change,
                 'demos_scheduled_change': demos_scheduled_change,
                 'demos_completed_change': demos_completed_change,
                 'revenue_change': revenue_change,
                 'activities_change': activities_change,
-                'total_talk_time': total_talk_time_all,
-                'talk_time_change': talk_time_change
+                'talk_time_change': talk_time_change  # New: Include talk time change
             },
             'team_performance': team_performance
         }
