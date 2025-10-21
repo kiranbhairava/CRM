@@ -1951,20 +1951,13 @@ async def reschedule_meeting(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to reschedule meeting: {str(e)}")
 
-
-# Also update the create calendar event endpoint - find this in main.py and update the timezone:
-# In the /google/calendar/event endpoint, change:
-# 'timeZone': event_data.get('timezone', 'UTC')
-# TO:
-# 'timeZone': 'Asia/Kolkata'
-
 @app.put("/communications/{communication_id}/cancel")
 async def cancel_meeting(
     communication_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Cancel a meeting - automatically sets status to 'cancelled'"""
+    """Cancel a meeting - automatically sets status to 'cancelled' and sends email notification"""
     try:
         # Get the communication record
         communication = db.query(Communication).filter(
@@ -1975,33 +1968,136 @@ async def cancel_meeting(
         if not communication:
             raise HTTPException(status_code=404, detail="Meeting not found")
         
-        # Automatically set status to 'cancelled'
+        # Get lead details
+        lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        
+        # Store old status
+        old_status = communication.status
+        
+        # Update status to cancelled
         communication.status = 'cancelled'
+        
+        # Handle Google Calendar if integrated
+        google_calendar_updated = False
+        try:
+            token = db.query(GoogleToken).filter(GoogleToken.user_id == current_user.id).first()
+            if token and communication.google_event_id:
+                # Get credentials
+                creds_data = {
+                    'token': token.token,
+                    'refresh_token': token.refresh_token,
+                    'token_uri': token.token_uri,
+                    'client_id': token.client_id,
+                    'client_secret': token.client_secret,
+                    'scopes': json.loads(token.scopes)
+                }
+                credentials = GoogleWorkspaceManager.get_credentials(creds_data)
+                
+                # Cancel the calendar event
+                service = build('calendar', 'v3', credentials=credentials)
+                service.events().delete(
+                    calendarId='primary',
+                    eventId=communication.google_event_id,
+                    sendUpdates='all'  # This will notify attendees
+                ).execute()
+                
+                google_calendar_updated = True
+                
+        except Exception as e:
+            print(f"Google Calendar deletion failed: {str(e)}")
+        
+        # If Google Calendar not integrated or failed, send manual email notification
+        if not google_calendar_updated:
+            try:
+                # Extract all attendees
+                attendees = [lead.email_address]
+                if communication.content:
+                    import re
+                    participants_match = re.search(r'Participants: (.+?)(?:\n|$)', communication.content)
+                    if participants_match:
+                        participants = [p.strip() for p in participants_match.group(1).split(',')]
+                        attendees.extend(participants)
+                
+                # Format date in IST for email
+                meeting_date_ist = format_ist_datetime(communication.scheduled_at)
+                
+                # Create cancellation email
+                notification_subject = f"Meeting Cancelled: {communication.subject}"
+                notification_body = f"""
+                <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                        <h2 style="color: #dc2626; border-bottom: 2px solid #dc2626; padding-bottom: 10px;">
+                            Meeting Cancelled
+                        </h2>
+                        
+                        <p>Hello,</p>
+                        
+                        <p>A meeting has been cancelled.</p>
+                        
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #1f2937;">Cancelled Meeting Details:</h3>
+                            <p><strong>Title:</strong> {communication.subject}</p>
+                            <p><strong>Scheduled Date:</strong> {meeting_date_ist}</p>
+                            {f'<p><strong>Description:</strong> {communication.content}</p>' if communication.content else ''}
+                        </div>
+                        
+                        <p>If you have any questions, please contact {current_user.name}.</p>
+                        
+                        <p style="color: #6b7280; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                            This is an automated notification. All times are in Indian Standard Time (IST).
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """
+                
+                # Send via Gmail if integrated
+                token = db.query(GoogleToken).filter(GoogleToken.user_id == current_user.id).first()
+                if token:
+                    try:
+                        creds_data = {
+                            'token': token.token,
+                            'refresh_token': token.refresh_token,
+                            'token_uri': token.token_uri,
+                            'client_id': token.client_id,
+                            'client_secret': token.client_secret,
+                            'scopes': json.loads(token.scopes)
+                        }
+                        credentials = GoogleWorkspaceManager.get_credentials(creds_data)
+                        
+                        for attendee_email in attendees:
+                            GmailManager.send_email(credentials, {
+                                'to': attendee_email,
+                                'subject': notification_subject,
+                                'body': notification_body,
+                                'is_html': True
+                            })
+                    except Exception as email_error:
+                        print(f"Failed to send email: {str(email_error)}")
+                        
+            except Exception as notify_error:
+                print(f"Notification failed: {str(notify_error)}")
         
         db.commit()
         db.refresh(communication)
 
-        # ✅ ADD: Timeline logging
-        lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
+        # Timeline logging
         lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
         changes = {
             "status": {
-                "old": communication.status,
+                "old": old_status,
                 "new": "cancelled"
             }
         }
         TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, changes)
-
-        
-        
-        # TODO: If Google Calendar integration, cancel the calendar event here
-        # if communication.google_event_id:
-        #     cancel_google_calendar_event(communication.google_event_id)
         
         return {
             'id': communication.id,
             'status': communication.status,
-            'message': 'Meeting cancelled successfully'
+            'message': 'Meeting cancelled successfully and attendees notified' if google_calendar_updated else 'Meeting cancelled successfully'
         }
         
     except HTTPException:
@@ -2009,7 +2105,8 @@ async def cancel_meeting(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to cancel meeting: {str(e)}")
-    
+
+
 from pydantic import BaseModel
 from typing import Optional
 
