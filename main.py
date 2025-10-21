@@ -2806,70 +2806,107 @@ async def delete_communication(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to delete communication: {str(e)}")
-    
 
-# Add this endpoint to main.py (after your communications endpoints)
+    # Add these two endpoints to main.py (after other communication endpoints)
 
-# @app.get("/leads/{lead_id}/activities")
-# async def get_lead_activities(
-#     lead_id: int,
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     """Get activity timeline for a lead"""
-#     try:
-#         # Verify lead exists
-#         lead = db.query(Lead).filter(Lead.id == lead_id).first()
-#         if not lead:
-#             raise HTTPException(status_code=404, detail="Lead not found")
-        
-#         activities = []
-        
-#         # Get all communications for this lead
-#         communications = db.query(Communication).filter(
-#             Communication.lead_id == lead_id
-#         ).order_by(Communication.created_at.desc()).all()
-        
-#         for comm in communications:
-#             user = db.query(User).filter(User.id == comm.user_id).first()
-#             user_name = user.name if user else "Unknown User"
+@app.get("/communications")
+async def get_all_communications(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all communications that the current user has access to
+    """
+    try:
+        if PermissionChecker.is_admin(current_user):
+            # Admin sees all communications
+            comms = db.query(Communication).all()
+            return [{
+                "id": c.id,
+                "lead_id": c.lead_id,
+                "user_id": c.user_id,
+                "type": c.type,
+                "subject": c.subject,
+                "content": c.content,
+                "scheduled_at": c.scheduled_at,
+                "completed_at": c.completed_at,
+                "status": c.status,
+                "feedback": c.feedback,
+                "meet_link": c.meet_link,
+                "google_event_id": c.google_event_id,
+                "google_message_id": c.google_message_id,
+                "created_at": c.created_at
+            } for c in comms]
+        else:
+            # Sales manager sees communications for leads assigned to them
+            leads = db.query(Lead).filter(Lead.assigned_to == current_user.id).all()
+            lead_ids = [lead.id for lead in leads]
             
-#             # Determine activity description based on communication type
-#             if comm.type == 'meeting':
-#                 description = f"Scheduled meeting: {comm.subject}"
-#                 action = "communication"
-#             elif comm.type == 'call':
-#                 description = f"Call: {comm.subject}"
-#                 action = "communication"
-#             elif comm.type == 'email':
-#                 description = f"Email sent: {comm.subject}"
-#                 action = "communication"
-#             elif comm.type == 'note':
-#                 description = f"Note added: {comm.subject}"
-#                 action = "communication"
-#             else:
-#                 description = f"Activity: {comm.subject}"
-#                 action = "communication"
-            
-#             activities.append({
-#                 'id': comm.id,
-#                 'description': description,
-#                 'action': action,
-#                 'user_name': user_name,
-#                 'created_at': comm.created_at,
-#                 'type': comm.type
-#             })
-        
-#         # You can also add other activities like status changes, assignments, etc.
-#         # For now, we're just showing communications
-        
-#         return activities
-        
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to get activities: {str(e)}")
+            comms = db.query(Communication).filter(Communication.lead_id.in_(lead_ids)).all()
+            return [{
+                "id": c.id,
+                "lead_id": c.lead_id,
+                "user_id": c.user_id,
+                "type": c.type,
+                "subject": c.subject,
+                "content": c.content,
+                "scheduled_at": c.scheduled_at,
+                "completed_at": c.completed_at,
+                "status": c.status,
+                "feedback": c.feedback,
+                "meet_link": c.meet_link,
+                "google_event_id": c.google_event_id,
+                "google_message_id": c.google_message_id,
+                "created_at": c.created_at
+            } for c in comms]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch communications: {str(e)}")
 
+@app.get("/attachments")
+async def get_all_attachments(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all attachments that the current user has access to
+    """
+    try:
+        if PermissionChecker.is_admin(current_user):
+            # Admin sees all attachments
+            attachments = db.query(FileAttachment).all()
+            return [{
+                "id": a.id,
+                "lead_id": a.lead_id,
+                "user_id": a.user_id,
+                "filename": a.filename,
+                "original_filename": a.original_filename,
+                "file_path": a.file_path,
+                "file_size": a.file_size,
+                "mime_type": a.mime_type,
+                "communication_id": a.communication_id,
+                "created_at": a.created_at
+            } for a in attachments]
+        else:
+            # Sales manager sees attachments for leads assigned to them
+            leads = db.query(Lead).filter(Lead.assigned_to == current_user.id).all()
+            lead_ids = [lead.id for lead in leads]
+            
+            attachments = db.query(FileAttachment).filter(FileAttachment.lead_id.in_(lead_ids)).all()
+            return [{
+                "id": a.id,
+                "lead_id": a.lead_id,
+                "user_id": a.user_id,
+                "filename": a.filename,
+                "original_filename": a.original_filename,
+                "file_path": a.file_path,
+                "file_size": a.file_size,
+                "mime_type": a.mime_type,
+                "communication_id": a.communication_id,
+                "created_at": a.created_at
+            } for a in attachments]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch attachments: {str(e)}")
+  
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
