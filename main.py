@@ -2964,6 +2964,7 @@ async def get_all_communications(
                 "meet_link": c.meet_link,
                 "google_event_id": c.google_event_id,
                 "google_message_id": c.google_message_id,
+                "audio_url": c.audio_url,
                 "created_at": c.created_at
             } for c in comms]
         else:
