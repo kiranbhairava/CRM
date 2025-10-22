@@ -613,6 +613,7 @@ class CommunicationCreate(BaseModel):
     call_duration: Optional[int] = None  # in minutes
     lead_status: Optional[str] = None  # New lead status after call
     feedback: Optional[str] = None 
+    audio_url: Optional[str] = None  # New field for call audio URL
 
 @app.post("/leads/{lead_id}/communications")
 async def create_communication(
@@ -639,6 +640,7 @@ async def create_communication(
             completed_at=comm_data.completed_at,
             status=comm_data.status or 'pending',
             feedback=comm_data.feedback,
+            audio_url=comm_data.audio_url,  # Add audio URL
             created_at=datetime.utcnow()
         )
         
@@ -2797,6 +2799,7 @@ class CommunicationUpdate(BaseModel):
     content: Optional[str] = None
     scheduled_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    audio_url: Optional[str] = None  # New field for call audio URL
 
 @app.put("/communications/{communication_id}")
 async def update_communication(
@@ -2845,6 +2848,9 @@ async def update_communication(
         
         if update_data.scheduled_at is not None:
             comm.scheduled_at = update_data.scheduled_at
+        
+        if update_data.audio_url is not None:
+            comm.audio_url = update_data.audio_url  
         
         if update_data.completed_at is not None:
             comm.completed_at = update_data.completed_at

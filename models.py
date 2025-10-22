@@ -83,6 +83,7 @@ class Communication(Base):
     google_event_id = Column(String(500))
     google_message_id = Column(String(500))
     meet_link = Column(String(1000))
+    audio_url = Column(String(1000), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Add this relationship
