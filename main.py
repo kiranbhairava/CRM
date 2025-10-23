@@ -1180,6 +1180,7 @@ async def create_lead(
             status=lead_data.status or "New",  # Store as string directly
             status_description=lead_data.status_description.strip() if lead_data.status_description else None,
             assigned_to=lead_data.assigned_to,
+            created_at=datetime.utcnow()
         )
         
         # Add to database
@@ -1214,7 +1215,8 @@ async def create_lead(
             "referred_by": new_lead.referred_by,
             "status": new_lead.status,  # Already a string
             "status_description": new_lead.status_description,
-            "assigned_to": new_lead.assigned_to
+            "assigned_to": new_lead.assigned_to,
+            "created_at": new_lead.created_at
         }
         
     except ValueError as e:
@@ -1274,7 +1276,8 @@ async def list_leads(
                 "status": lead.status or "New",
                 "status_description": lead.status_description,
                 "assigned_to": lead.assigned_to,
-                "assigned_to_name": assigned_to_name  # Add this field
+                "assigned_to_name": assigned_to_name,
+                "created_at": lead.created_at,
             }
             leads_data.append(lead_dict)
         
