@@ -1279,14 +1279,12 @@ async def get_leads(
         else:
             query = query.order_by(sort_column.desc())
         
-        # Apply pagination
-        total_count = query.count()
+        # Apply pagination but don't need the count anymore if we're just returning the array
         leads = query.offset(skip).limit(limit).all()
         
         # Format leads for response
         leads_data = []
         for lead in leads:
-            # [your existing lead formatting code]
             lead_data = {
                 "id": lead.id,
                 "first_name": lead.first_name,
@@ -1311,20 +1309,18 @@ async def get_leads(
                 "salutation": lead.salutation,
                 "alternate_mobile_number": lead.alternate_mobile_number,
                 "status_description": lead.status_description,
-                "opportunity_amount": lead.opportunity_amount,
                 "created_at": lead.created_at.isoformat() if lead.created_at else None,
                 "updated_at": lead.updated_at.isoformat() if lead.updated_at else None
             }
             leads_data.append(lead_data)
         
-        return {
-            "total": total_count,
-            "leads": leads_data
-        }
+        # Just return the leads array directly instead of the object with total
+        return leads_data
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching leads: {str(e)}")
-        
+    
+            
 @app.put("/leads/{lead_id}")
 async def update_lead(
     lead_id: int, 
