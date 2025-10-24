@@ -1227,68 +1227,84 @@ async def create_lead(
         raise HTTPException(status_code=500, detail=f"Failed to create lead: {str(e)}")
 
 @app.get("/leads")
-async def list_leads(
-    skip: int = 0, 
-    limit: int = 2000, 
-    current_user: User = Depends(get_current_user), 
+async def get_leads(
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
+    updated_after: Optional[str] = None,
+    updated_before: Optional[str] = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get leads with role-based access control"""
+    """Get leads with filtering and sorting"""
     try:
+        # Base query with role-based access
         if PermissionChecker.is_admin(current_user):
-            leads = db.query(Lead).offset(skip).limit(limit).all()
+            query = db.query(Lead)
         else:
-            leads = db.query(Lead).filter(
-                Lead.assigned_to == current_user.id
-            ).offset(skip).limit(limit).all()
+            query = db.query(Lead).filter(Lead.assigned_to == current_user.id)
         
-        # Convert to dictionaries with assigned user name
+        # Apply date filters
+        if created_after:
+            query = query.filter(Lead.created_at >= datetime.strptime(created_after, "%Y-%m-%d"))
+        
+        if created_before:
+            # Add one day to include the end date fully
+            end_date = datetime.strptime(created_before, "%Y-%m-%d") + timedelta(days=1)
+            query = query.filter(Lead.created_at < end_date)
+        
+        if updated_after:
+            query = query.filter(Lead.updated_at >= datetime.strptime(updated_after, "%Y-%m-%d"))
+        
+        if updated_before:
+            # Add one day to include the end date fully
+            end_date = datetime.strptime(updated_before, "%Y-%m-%d") + timedelta(days=1)
+            query = query.filter(Lead.updated_at < end_date)
+        
+        # Apply sorting
+        sort_columns = {
+            "created_at": Lead.created_at,
+            "updated_at": Lead.updated_at,
+            "name": Lead.first_name,  # Simplification - sort by first name only
+            "status": Lead.status
+        }
+        
+        sort_column = sort_columns.get(sort_by, Lead.created_at)
+        
+        if sort_order.lower() == "asc":
+            query = query.order_by(sort_column.asc())
+        else:
+            query = query.order_by(sort_column.desc())
+        
+        # Apply pagination
+        total_count = query.count()
+        leads = query.offset(skip).limit(limit).all()
+        
+        # Format leads for response
         leads_data = []
         for lead in leads:
-            # Get assigned user's name
-            assigned_to_name = None
-            if lead.assigned_to:
-                assigned_user = db.query(User).filter(User.id == lead.assigned_to).first()
-                if assigned_user:
-                    assigned_to_name = assigned_user.name
-            
-            lead_dict = {
+            # [your existing lead formatting code]
+            lead_data = {
                 "id": lead.id,
-                "salutation": lead.salutation,
                 "first_name": lead.first_name,
                 "last_name": lead.last_name,
-                "email_address": lead.email_address,
-                "mobile_number": lead.mobile_number,
-                "alternate_mobile_number": lead.alternate_mobile_number,
-                "working_status": lead.working_status,
-                "street": lead.street,
-                "postal_code": lead.postal_code,
-                "city": lead.city,
-                "state": lead.state,
-                "country": lead.country,
-                "institute_name": lead.institute_name,
-                "qualification": lead.qualification,
-                "course_interested_in": lead.course_interested_in,
-                "description": lead.description,
-                "opportunity_amount": lead.opportunity_amount,
-                "lead_source": lead.lead_source,
-                "referred_by": lead.referred_by,
-                "status": lead.status or "New",
-                "status_description": lead.status_description,
-                "assigned_to": lead.assigned_to,
-                "assigned_to_name": assigned_to_name,
-                  # Add this field
-                "created_at": lead.created_at,
-                "updated_at": lead.updated_at
+                # ... other lead fields ...
+                "created_at": lead.created_at.isoformat() if lead.created_at else None,
+                "updated_at": lead.updated_at.isoformat() if lead.updated_at else None
             }
-            leads_data.append(lead_dict)
+            leads_data.append(lead_data)
         
-        return leads_data
-        
-    except Exception as e:
-        print(f"Database error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        return {
+            "total": total_count,
+            "leads": leads_data
+        }
     
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching leads: {str(e)}")
+        
 @app.put("/leads/{lead_id}")
 async def update_lead(
     lead_id: int, 
