@@ -1268,7 +1268,7 @@ async def get_leads(
         sort_columns = {
             "created_at": Lead.created_at,
             "updated_at": Lead.updated_at,
-            "name": Lead.first_name,  # Simplification - sort by first name only
+            "name": Lead.first_name, 
             "status": Lead.status
         }
         
@@ -1291,7 +1291,27 @@ async def get_leads(
                 "id": lead.id,
                 "first_name": lead.first_name,
                 "last_name": lead.last_name,
-                # ... other lead fields ...
+                "email_address": lead.email_address,
+                "mobile_number": lead.mobile_number,
+                "status": lead.status,
+                "assigned_to": lead.assigned_to,
+                "lead_source": lead.lead_source,
+                "opportunity_amount": lead.opportunity_amount,
+                "description": lead.description,
+                "qualification": lead.qualification,
+                "course_interested_in": lead.course_interested_in,
+                "institute_name": lead.institute_name,
+                "street": lead.street,
+                "city": lead.city,
+                "state": lead.state,
+                "country": lead.country,
+                "postal_code": lead.postal_code,
+                "working_status": lead.working_status,
+                "referred_by": lead.referred_by,
+                "salutation": lead.salutation,
+                "alternate_mobile_number": lead.alternate_mobile_number,
+                "status_description": lead.status_description,
+                "opportunity_amount": lead.opportunity_amount,
                 "created_at": lead.created_at.isoformat() if lead.created_at else None,
                 "updated_at": lead.updated_at.isoformat() if lead.updated_at else None
             }
