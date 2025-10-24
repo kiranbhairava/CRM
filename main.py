@@ -1276,7 +1276,10 @@ async def list_leads(
                 "status": lead.status or "New",
                 "status_description": lead.status_description,
                 "assigned_to": lead.assigned_to,
-                "assigned_to_name": assigned_to_name  # Add this field
+                "assigned_to_name": assigned_to_name,
+                  # Add this field
+                "created_at": lead.created_at,
+                "updated_at": lead.updated_at
             }
             leads_data.append(lead_dict)
         
