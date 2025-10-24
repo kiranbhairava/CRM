@@ -1214,7 +1214,9 @@ async def create_lead(
             "referred_by": new_lead.referred_by,
             "status": new_lead.status,  # Already a string
             "status_description": new_lead.status_description,
-            "assigned_to": new_lead.assigned_to
+            "assigned_to": new_lead.assigned_to,
+            "created_at": new_lead.created_at,
+            "updated_at": new_lead.updated_at
         }
         
     except ValueError as e:

@@ -1,6 +1,6 @@
 # models.py - Fixed Data Models with Proper Enum Handling
 import enum
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, Enum, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, Enum, Float, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from pydantic import BaseModel, EmailStr, validator
@@ -134,6 +134,8 @@ class Lead(Base):
     referred_by = Column(String(255), nullable=True)
     status = Column(String(20), nullable=True, default="New")  # Changed from Enum to String
     status_description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=True)
     assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     assigned_sales_manager = relationship("User", back_populates="leads")
@@ -379,6 +381,8 @@ class LeadResponse(BaseModel):
     status: str
     status_description: Optional[str]
     assigned_to: Optional[int]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
