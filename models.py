@@ -84,7 +84,11 @@ class Communication(Base):
     google_message_id = Column(String(500))
     meet_link = Column(String(1000))
     audio_url = Column(String(1000), nullable=True)
+    # ✅ NEW reminder flags
+    reminder_15_sent = Column(Boolean, default=False, nullable=False)
+    reminder_10_sent = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
     
     # Add this relationship
     attachments = relationship("FileAttachment", back_populates="communication")

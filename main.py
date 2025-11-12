@@ -9,6 +9,15 @@ import os
 from dotenv import load_dotenv
 import base64, json
 from timeline_helper import TimelineLogger
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+import os
+import json
+
+from database import SessionLocal
+from models import Communication, GoogleToken, User
+from google_integration import GmailManager, GoogleWorkspaceManager, ChatManager
+
 
 # Import from our existing modules
 from roles import User, UserRole, UserCreate, UserLogin, SalesManagerCreate, RoleManager, PermissionChecker, Base as RoleBase
@@ -3073,6 +3082,121 @@ async def get_all_attachments(
             } for a in attachments]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch attachments: {str(e)}")
+    
+# -------------------------------------------------------------------
+# 🕒 CALL REMINDER SCHEDULER
+# -------------------------------------------------------------------
+
+def send_call_reminder(db, comm: Communication, user: User, minutes: int):
+    """Send Gmail + Chat reminder to a user before a scheduled call."""
+    subject = f"Reminder: Call scheduled in {minutes} minutes"
+    body = (
+        f"Hi {user.name},\n\n"
+        f"You have a scheduled call with lead ID {comm.lead_id}"
+        f"in about {minutes} minutes.\n\n"
+        # f"Scheduled at: {comm.scheduled_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+        f"Please be ready to take the call."
+    )
+
+    # --- Gmail ---
+    token = db.query(GoogleToken).filter(GoogleToken.user_id == user.id).first()
+    if token:
+        creds_data = {
+            'token': token.token,
+            'refresh_token': token.refresh_token,
+            'token_uri': token.token_uri,
+            'client_id': token.client_id,
+            'client_secret': token.client_secret,
+            'scopes': json.loads(token.scopes) if isinstance(token.scopes, str) else token.scopes
+        }
+        credentials = GoogleWorkspaceManager.get_credentials(creds_data)
+        try:
+            GmailManager.send_email(credentials, {
+                'to': user.email,
+                'subject': subject,
+                'body': body,
+                'is_html': False
+            })
+            print(f"[REMINDER] Gmail sent to {user.email} for call {comm.id}")
+        except Exception as e:
+            print(f"[REMINDER] Gmail send failed: {e}")
+    else:
+        print(f"[REMINDER] No Google token for user {user.email}")
+
+    # --- Google Chat ---
+    webhook = os.getenv("GOOGLE_CHAT_WEBHOOK")
+    if webhook:
+        ChatManager.send_chat_message(
+            webhook,
+            f"📞Reminder: You have a scheduled call in {minutes} minutes.\n"
+            f"subject: {comm.subject}\n"
+            # f"Lead mobile: {comm.lead_mobile}\n"
+            f"Description: {comm.subject}\n"
+            # f"Time: {comm.scheduled_at.strftime('%Y-%m-%d %H:%M UTC')}"
+        )
+
+
+def call_reminder_job():
+    """Runs every minute; sends 15-min and 10-min call reminders."""
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        window = timedelta(seconds=60)
+        target_15_from = now + timedelta(minutes=15) - window
+        target_15_to = now + timedelta(minutes=15) + window
+        target_10_from = now + timedelta(minutes=10) - window
+        target_10_to = now + timedelta(minutes=10) + window
+
+        # --- 15 min reminders ---
+        comms_15 = db.query(Communication).filter(
+            Communication.type == 'call',
+            Communication.status == 'scheduled',
+            Communication.reminder_15_sent == False,
+            Communication.scheduled_at >= target_15_from,
+            Communication.scheduled_at <= target_15_to
+        ).all()
+        for comm in comms_15:
+            user = db.query(User).filter(User.id == comm.user_id).first()
+            if user:
+                send_call_reminder(db, comm, user, 15)
+                comm.reminder_15_sent = True
+                db.add(comm)
+                db.commit()
+
+        # --- 10 min reminders ---
+        comms_10 = db.query(Communication).filter(
+            Communication.type == 'call',
+            Communication.status == 'scheduled',
+            Communication.reminder_10_sent == False,
+            Communication.scheduled_at >= target_10_from,
+            Communication.scheduled_at <= target_10_to
+        ).all()
+        for comm in comms_10:
+            user = db.query(User).filter(User.id == comm.user_id).first()
+            if user:
+                send_call_reminder(db, comm, user, 10)
+                comm.reminder_10_sent = True
+                db.add(comm)
+                db.commit()
+    except Exception as e:
+        print(f"[REMINDER JOB ERROR] {e}")
+    finally:
+        db.close()
+
+
+# --- Scheduler setup ---
+scheduler = BackgroundScheduler(timezone="UTC")
+scheduler.add_job(call_reminder_job, "interval", seconds=60, id="call_reminder")
+
+@app.on_event("startup")
+def start_scheduler():
+    scheduler.start()
+    print("[REMINDER] Call reminder scheduler started.")
+
+@app.on_event("shutdown")
+def shutdown_scheduler():
+    scheduler.shutdown()
+
   
 if __name__ == "__main__":
     import uvicorn

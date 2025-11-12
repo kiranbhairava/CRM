@@ -325,3 +325,18 @@ class GmailManager:
             
         except HttpError as error:
             raise Exception(f"Gmail API error: {error}")
+        
+import requests
+
+class ChatManager:
+    """Simple Google Chat webhook sender."""
+    @staticmethod
+    def send_chat_message(webhook_url: str, message: str):
+        if not webhook_url:
+            return {"status": "no_webhook"}
+        try:
+            r = requests.post(webhook_url, json={"text": message}, timeout=5)
+            r.raise_for_status()
+            return {"status": "sent", "http_status": r.status_code}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
