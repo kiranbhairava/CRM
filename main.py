@@ -78,11 +78,20 @@ app = FastAPI(title="EdTech CRM - Adult Learners", version="1.0.0")
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:5500",
+    "http://127.0.0.1:8000",
+    "https://crm-frontend-eta-drab.vercel.app",     # ✅ add this
+    "https://www.crm-frontend-eta-drab.vercel.app", # (optional)
+]
+
 
 # app.include_router(calls_router)
 # app.include_router(emails_router)
