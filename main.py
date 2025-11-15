@@ -1,5 +1,3 @@
-# main.py - EdTech CRM using existing modules
-# from django import db
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
@@ -17,6 +15,8 @@ import json
 from database import SessionLocal
 from models import Communication, GoogleToken, User
 from google_integration import GmailManager, GoogleWorkspaceManager, ChatManager
+from timeline_logger import TimelineLogger
+from timeline_helper import TimelineLogger
 
 
 # Import from our existing modules
@@ -29,11 +29,13 @@ load_dotenv()
 from external_website_leads_sync import router as external_leads_router
 from database import engine, SessionLocal, get_db
 
+# from api.v1.calls import router as calls_router
+# from api.v1.emails import router as emails_router
+# from api.v1.meetings import router as meetings_router
 
 # Configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://user:password@localhost/edtech_crm")
 
-# Database setup
 # engine = create_engine(DATABASE_URL)
 from sqlalchemy import create_engine
 
@@ -82,13 +84,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database dependency
-# def get_db():
-#     db = SessionLocal()
-#     try:
-#         yield db
-#     finally:
-#         db.close()
+# app.include_router(calls_router)
+# app.include_router(emails_router)
+# app.include_router(meetings_router)
 
 # Create tables on startup
 @app.on_event("startup")
@@ -130,6 +128,14 @@ def require_admin(current_user: User = Depends(get_current_user)):
 
 # Import TokenManager after defining dependencies
 from auth import TokenManager
+
+from fastapi import Request
+
+def get_ip_address(request: Request):
+    return request.client.host
+
+from api.v1.email_templates import router as email_templates_router
+app.include_router(email_templates_router)
 
 # ================ ENDPOINTS ================
 
@@ -479,39 +485,6 @@ async def update_sales_manager(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.delete("/sales-managers/{user_id}")
-# async def delete_sales_manager(
-#     user_id: int,
-#     current_user: User = Depends(require_admin),
-#     db: Session = Depends(get_db)
-# ):
-#     """Delete sales manager (Admin only)"""
-#     try:
-#         manager = db.query(User).filter(
-#             User.id == user_id,
-#             User.role == UserRole.SALES_MANAGER
-#         ).first()
-        
-#         if not manager:
-#             raise HTTPException(status_code=404, detail="Sales manager not found")
-        
-#         # Check if manager has assigned leads
-#         assigned_leads = db.query(Lead).filter(Lead.assigned_to == user_id).count()
-#         if assigned_leads > 0:
-#             raise HTTPException(
-#                 status_code=400, 
-#                 detail=f"Cannot delete manager with {assigned_leads} assigned leads. Please reassign them first."
-#             )
-        
-#         db.delete(manager)
-#         db.commit()
-        
-#         return {"message": "Sales manager deleted successfully"}
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         db.rollback()
-#         raise HTTPException(status_code=500, detail=str(e))
 @app.delete("/sales-managers/{user_id}")
 async def delete_sales_manager(
     user_id: int,
@@ -549,63 +522,6 @@ async def delete_sales_manager(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     
-# @app.get("/leads/{id}")
-# async def get_lead(id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-#     """Get lead details"""
-#     lead = db.query(Lead).filter(Lead.id == id).first()
-#     if not lead:
-#         raise HTTPException(status_code=404, detail="Lead not found")
-#     return lead
-
-# @app.put("/leads/{id}")
-# async def update_lead(id: int, lead_data: LeadUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-#     """Update lead details"""
-#     lead = db.query(Lead).filter(Lead.id == id).first()
-#     if not lead:
-#         raise HTTPException(status_code=404, detail="Lead not found")
-
-#     for key, value in lead_data.dict().items():
-#         setattr(lead, key, value)
-
-#     db.commit()
-#     db.refresh(lead)
-#     return lead
-
-# @app.get("/dashboard")
-# async def get_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-#     """Get role-specific dashboard"""
-#     if PermissionChecker.is_admin(current_user):
-#         # Admin dashboard
-#         total_users = db.query(User).count()
-#         sales_managers = db.query(User).filter(User.role == UserRole.SALES_MANAGER).count()
-#         leads = db.query(Lead).count()
-        
-#         return {
-#             "role": "admin",
-#             "total_users": total_users,
-#             "sales_managers": sales_managers,
-#             "leads": leads,
-#             "message": f"Welcome Admin {current_user.name}"
-#         }
-#     else:
-#         # Sales manager dashboard
-#         return {
-#             "role": "sales_manager",
-#             "name": current_user.name,
-#             "monthly_target": current_user.monthly_target,
-#             "leads_assigned": db.query(Lead).filter(Lead.assigned_to == current_user.id).count(),
-#             "leads_converted": db.query(Lead).filter(Lead.assigned_to == current_user.id, Lead.status == "Converted").count(),
-#             "leads_in_progress": db.query(Lead).filter(Lead.assigned_to == current_user.id, Lead.status == "In Progress").count(),
-#             "leads_new": db.query(Lead).filter(Lead.assigned_to == current_user.id, Lead.status == "New").count(),
-#             "leads_lost": db.query(Lead).filter(Lead.assigned_to == current_user.id, Lead.status == "Lost").count(),
-#             "message": f"Welcome {current_user.name}"
-#         }
-
-# ============================================
-# ADD THIS TO main.py
-# Place it after the existing /leads/{lead_id}/communications endpoint
-# ============================================
-
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -624,68 +540,146 @@ class CommunicationCreate(BaseModel):
     feedback: Optional[str] = None 
     audio_url: Optional[str] = None  # New field for call audio URL
 
+from fastapi import Form, File, UploadFile
+from typing import List
+
 @app.post("/leads/{lead_id}/communications")
 async def create_communication(
     lead_id: int,
-    comm_data: CommunicationCreate,
+    request: Request,
+    # form fields (email)
+    type: Optional[str] = Form(None),
+    subject: Optional[str] = Form(None),
+    content: Optional[str] = Form(None),
+    scheduled_at: Optional[str] = Form(None),
+    completed_at: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),
+    meet_link: Optional[str] = Form(None),
+    audio_url: Optional[str] = Form(None),
+    google_event_id: Optional[str] = Form(None),
+    google_message_id: Optional[str] = Form(None),
+    files: List[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new communication record (call log, email, meeting, note)"""
-    try:
-        # Verify lead exists
-        lead = db.query(Lead).filter(Lead.id == lead_id).first()
-        if not lead:
-            raise HTTPException(status_code=404, detail="Lead not found")
-        
-        # Create communication record
-        new_comm = Communication(
-            lead_id=lead_id,
-            user_id=current_user.id,
-            type=comm_data.type,
-            subject=comm_data.subject,
-            content=comm_data.content,
-            scheduled_at=comm_data.scheduled_at,
-            completed_at=comm_data.completed_at,
-            status=comm_data.status or 'pending',
-            feedback=comm_data.feedback,
-            audio_url=comm_data.audio_url,  # Add audio URL
-            created_at=datetime.utcnow()
-        )
-        
-        db.add(new_comm)
+    # Detect JSON vs Form
+    data = None
+    if request.headers.get("content-type", "").startswith("application/json"):
+        data = await request.json()
+        type = data.get("type")
+        subject = data.get("subject")
+        content = data.get("content")
+        scheduled_at = data.get("scheduled_at")
+        completed_at = data.get("completed_at")
+        status = data.get("status")
+        meet_link = data.get("meet_link")
+        audio_url = data.get("audio_url")
+        google_event_id = data.get("google_event_id")
+        google_message_id = data.get("google_message_id")
+
+    if not type or not subject:
+        raise HTTPException(status_code=400, detail="type and subject required")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    def to_dt(v):
+        if not v: return None
+        try: return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except: return None
+
+    scheduled_dt = to_dt(scheduled_at)
+    completed_dt = to_dt(completed_at)
+
+    # Collect explicit call fields and other extras into details
+    details = {}
+    # from JSON body
+    if data:
+        for k, v in data.items():
+            if k in ("call_type","call_duration","lead_status"):
+                # handled below as explicit columns
+                continue
+            if k not in ("type","subject","content","scheduled_at","completed_at","status","meet_link","audio_url","google_event_id","google_message_id"):
+                details[k] = v
+
+    # from Form fields (if any)
+    # if form included extras, they will still be in locals if used earlier - you can extend if needed
+
+    # explicit call fields
+    call_type = (data.get("call_type") if data else None) or None
+    call_duration = (data.get("call_duration") if data else None) or None
+    lead_status_val = (data.get("lead_status") if data else None) or None
+
+    # also push these into details for full record
+    if call_type is not None: details["call_type"] = call_type
+    if call_duration is not None: details["call_duration"] = call_duration
+    if lead_status_val is not None: details["lead_status"] = lead_status_val
+
+    comm = Communication(
+        lead_id=lead_id,
+        user_id=current_user.id,
+        type=type,
+        subject=subject,
+        content=content,
+        details=details if details else None,
+        status=status or ("sent" if type == "email" else "pending"),
+        scheduled_at=scheduled_dt,
+        completed_at=completed_dt,
+        call_type=call_type,
+        call_duration=call_duration,
+        lead_status=lead_status_val,
+        meet_link=meet_link,
+        audio_url=audio_url,
+        google_event_id=google_event_id,
+        google_message_id=google_message_id,
+        created_at=datetime.utcnow()
+    )
+
+    db.add(comm)
+    db.commit()
+    db.refresh(comm)
+
+    # Save attachments (if any)
+    saved_files = []
+    if files:
+        os.makedirs("uploads/email_attachments", exist_ok=True)
+        for f in files:
+            path = os.path.join("uploads/email_attachments", f.filename)
+            with open(path, "wb") as buf:
+                buf.write(await f.read())
+            att = FileAttachment(
+                communication_id=comm.id,
+                lead_id=lead_id,
+                user_id=current_user.id,
+                filename=f.filename,
+                original_filename=f.filename,
+                file_path=path,
+                file_size=os.path.getsize(path),
+                mime_type=f.content_type
+            )
+            db.add(att)
+            saved_files.append(f.filename)
         db.commit()
-        db.refresh(new_comm)
 
-        # Log timeline action
-        lead_name = f"{lead.first_name} {lead.last_name}"
-        TimelineLogger.log_communication_created(db, current_user, new_comm, lead_name)  
+    # Timeline logging
+    lead_name = f"{lead.first_name} {lead.last_name}"
+    TimelineLogger.log_communication_created(db, current_user, comm, lead_name, ip_address=get_ip_address(request))
 
-        return {
-            'id': new_comm.id,
-            'lead_id': new_comm.lead_id,
-            'type': new_comm.type,
-            'subject': new_comm.subject,
-            'content': new_comm.content,
-            'scheduled_at': new_comm.scheduled_at,
-            'completed_at': new_comm.completed_at,
-            'status': new_comm.status,
-            'feedback': new_comm.feedback,
-            'created_at': new_comm.created_at,
-            'message': f'{comm_data.type.capitalize()} logged successfully'
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        print(f"Error creating communication: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Failed to create communication: {str(e)}"
-        )
+    # If lead status provided, log status change and optionally update Lead.status
+    if lead_status_val:
+        old_status = lead.status
+        # Option: update lead.status in DB
+        lead.status = lead_status_val
+        db.commit()
+        TimelineLogger.log_lead_status_change(db, current_user, lead, old_status=old_status or "Unknown", new_status=lead_status_val, ip_address=get_ip_address(request))
+
+    return {
+        "message": "Communication created",
+        "id": comm.id,
+        "attachments": saved_files
+    }
+
 
 # Optional: Get call logs specifically
 @app.get("/leads/{lead_id}/calls")
@@ -1770,7 +1764,6 @@ async def get_communication(
         'created_at': communication.created_at
     }
 
-
 # Replace the existing /communications/{id}/reschedule endpoint in main.py with this:
 
 from email.mime.text import MIMEText
@@ -1804,7 +1797,6 @@ def format_ist_datetime(dt):
     
     ist_time = convert_to_ist(dt)
     return ist_time.strftime('%B %d, %Y at %I:%M %p IST')
-
 
 # Replace the /communications/{id}/reschedule endpoint with this updated version:
 
@@ -2391,47 +2383,177 @@ async def send_email_with_attachments(
         raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 
+# --- Replace the existing GET /leads/{lead_id}/communications logic with this ---
 @app.get("/leads/{lead_id}/communications")
 async def get_lead_communications(
     lead_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all communications for a lead"""
-    # Verify lead exists
+    """
+    Get all communications for the given lead_id.
+    Always filter by lead_id (do NOT return the full table).
+    Admins see all communications for this lead_id; non-admins see communications
+    only if the lead is assigned to them (or you can adjust the permission logic).
+    """
+    try:
+        # Verify lead exists
+        lead = db.query(Lead).filter(Lead.id == lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        # If not admin, check lead assignment permission (optional)
+        if not PermissionChecker.is_admin(current_user):
+            # if you want to restrict non-admins to their leads:
+            if lead.assigned_to != current_user.id:
+                # Change this if your app permits other views (e.g. sales managers see their team)
+                raise HTTPException(status_code=403, detail="Not authorized to view this lead's communications")
+
+        # Always filter by the requested lead_id (this fixes the bug)
+        comms_q = db.query(Communication).filter(Communication.lead_id == lead_id)
+
+        # Add ordering so most recent entries come first
+        comms_q = comms_q.order_by(Communication.created_at.desc())
+
+        # Optional: limit results to reasonable count (e.g. 100) to avoid huge payloads
+        comms = comms_q.limit(500).all()
+
+        # Return only the fields frontend expects (avoid returning huge or sensitive fields)
+        return [{
+            "id": c.id,
+            "lead_id": c.lead_id,
+            "user_id": c.user_id,
+            "type": c.type,
+            "subject": c.subject,
+            "content": c.content,
+            "scheduled_at": c.scheduled_at,
+            "completed_at": c.completed_at,
+            "status": c.status,
+            "feedback": c.feedback,
+            "meet_link": c.meet_link,
+            "google_event_id": c.google_event_id,
+            "google_message_id": c.google_message_id,
+            "audio_url": c.audio_url,
+            "call_type": getattr(c, "call_type", None),
+            "call_duration": getattr(c, "call_duration", None),
+            "lead_status": getattr(c, "lead_status", None),
+            "details": getattr(c, "details", None),
+            "attachments": [ { "id": a.id, "filename": a.original_filename } for a in (c.attachments or []) ],
+            "created_at": c.created_at
+        } for c in comms]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch communications: {str(e)}")
+    
+@app.get("/leads/{lead_id}/timeline")
+def get_lead_timeline(lead_id: int, db: Session = Depends(get_db),
+                      current_user: User = Depends(get_current_user)):
+
+    # 1. Get lead (ensure exists)
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # Check if user has access to this lead
-    if current_user.role != UserRole.ADMIN and lead.assigned_to != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this lead")
+    timeline = []
 
-    # Get communications
-    communications = db.query(Communication).filter(
-        Communication.lead_id == lead_id
-    ).order_by(Communication.created_at.desc()).all()
+    # 2. Fetch all communications for the lead (calls, emails, meetings, notes)
+    comms = db.query(Communication)\
+              .filter(Communication.lead_id == lead_id)\
+              .order_by(Communication.created_at.desc())\
+              .all()
 
-    result = []
-    for comm in communications:
-        # Include the feedback field in the response
-        result.append({
-            "id": comm.id,
-            "type": comm.type,
-            "subject": comm.subject,
-            "content": comm.content,
-            "scheduled_at": comm.scheduled_at,
-            "completed_at": comm.completed_at,
-            "status": comm.status,
-            "meet_link": comm.meet_link,
-            "google_event_id": comm.google_event_id,
-            "google_message_id": comm.google_message_id,
-            "feedback": comm.feedback,  # Add this line to include the feedback field
-            "created_at": comm.created_at,
-            "user_id": comm.user_id
+    for c in comms:
+        # Determine readable title
+        if c.type == "email":
+            title = "Email Sent"
+        elif c.type == "call":
+            title = "Call Logged"
+        elif c.type == "meeting":
+            title = "Meeting Scheduled"
+        elif c.type == "note":
+            title = "Note Added"
+        else:
+            title = c.type.title()
+
+        # Clean timeline entry
+        timeline.append({
+            "id": c.id,
+            "type": c.type,
+            "title": title,
+            "description": c.subject or (c.content[:80] + "..." if c.content else ""),
+            "timestamp": c.completed_at or c.scheduled_at or c.created_at,
         })
 
-    return result
+    # 3. Sort by timestamp DESC
+    timeline.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    return {
+        "lead_id": lead_id,
+        "lead_name": f"{lead.first_name} {lead.last_name}",
+        "timeline": timeline
+    }
+
+
+@app.get("/communications/{comm_id}")
+async def get_single_communication(
+    comm_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    FAST endpoint: returns exactly ONE communication with attachments.
+    Eliminates loading all communications for a lead.
+    """
+
+    comm = (
+        db.query(Communication)
+        .filter(Communication.id == comm_id)
+        .first()
+    )
+
+    if not comm:
+        raise HTTPException(status_code=404, detail="Communication not found")
+
+    # Check permissions — admins can view all, others must be assigned
+    if not PermissionChecker.is_admin(current_user):
+        lead = db.query(Lead).filter(Lead.id == comm.lead_id).first()
+        if lead.assigned_to != current_user.id:
+            raise HTTPException(403, "Not allowed to view this communication")
+
+    return {
+        "id": comm.id,
+        "lead_id": comm.lead_id,
+        "user_id": comm.user_id,
+        "type": comm.type,
+        "subject": comm.subject,
+        "content": comm.content,
+        "scheduled_at": comm.scheduled_at,
+        "completed_at": comm.completed_at,
+        "status": comm.status,
+        "feedback": comm.feedback,
+        "meet_link": comm.meet_link,
+        "google_event_id": comm.google_event_id,
+        "google_message_id": comm.google_message_id,
+        "audio_url": comm.audio_url,
+
+        # optional call-related fields
+        "call_type": getattr(comm, "call_type", None),
+        "call_duration": getattr(comm, "call_duration", None),
+        "lead_status": getattr(comm, "lead_status", None),
+
+        # attachments
+        "attachments": [
+            {
+                "id": a.id,
+                "filename": a.original_filename,
+                "file_url": a.file_url,
+            } for a in (comm.attachments or [])
+        ],
+
+        "created_at": comm.created_at
+    }
+
 
 @app.delete("/leads/{lead_id}")
 async def delete_lead(
@@ -2847,96 +2969,96 @@ class CommunicationUpdate(BaseModel):
     completed_at: Optional[datetime] = None
     audio_url: Optional[str] = None  # New field for call audio URL
 
-@app.put("/communications/{communication_id}")
+@app.put("/communications/{comm_id}")
 async def update_communication(
-    communication_id: int,
-    update_data: CommunicationUpdate,
+    comm_id: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Update a communication (call, email, meeting, etc.)
-    
-    Permissions:
-    - ADMIN: Can edit any communication
-    - SALES_MANAGER: Can edit their own communications
-    - SALES_REP: Can edit their own communications
-    """
+    comm = db.query(Communication).filter(Communication.id == comm_id).first()
+    if not comm:
+        raise HTTPException(status_code=404, detail="Communication not found")
+
+    lead = comm.lead
+    lead_name = f"{lead.first_name} {lead.last_name}"
+
+    # Read request JSON
     try:
-        # Get the communication
-        comm = db.query(Communication).filter(Communication.id == communication_id).first()
-        
-        if not comm:
-            raise HTTPException(status_code=404, detail="Communication not found")
-        
-        # ✅ SIMPLIFIED PERMISSION CHECK - Works for all roles
-        # User can edit if they created it OR if they're an admin
-        can_edit = (comm.user_id == current_user.id) or PermissionChecker.is_admin(current_user)
-        
-        if not can_edit:
-            raise HTTPException(
-                status_code=403, 
-                detail="You don't have permission to edit this communication"
+        data = await request.json()
+    except:
+        data = {}
+
+    changes = {}
+
+    def set_if_changed(field, new_value):
+        """Helper to detect changes and update only changed fields"""
+        old_value = getattr(comm, field)
+        if new_value is not None and str(old_value) != str(new_value):
+            changes[field] = {"old": old_value, "new": new_value}
+            setattr(comm, field, new_value)
+
+    # 1. Standard fields
+    set_if_changed("subject", data.get("subject"))
+    set_if_changed("content", data.get("content"))
+    set_if_changed("status", data.get("status"))
+
+    # 2. Date fields
+    def to_dt(v):
+        if not v:
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except:
+            return None
+
+    if "scheduled_at" in data:
+        set_if_changed("scheduled_at", to_dt(data["scheduled_at"]))
+
+    if "completed_at" in data:
+        set_if_changed("completed_at", to_dt(data["completed_at"]))
+
+    # 3. Explicit call fields
+    set_if_changed("call_type", data.get("call_type"))
+    set_if_changed("call_duration", data.get("call_duration"))
+    set_if_changed("lead_status", data.get("lead_status"))
+
+    # 4. Details JSON — flexible storage
+    details = dict(comm.details or {})
+    if "details" in data:
+        for k, v in data["details"].items():
+            old_val = details.get(k)
+            if old_val != v:
+                changes[f"details.{k}"] = {"old": old_val, "new": v}
+                details[k] = v
+
+    comm.details = details or None
+
+    # Save changes
+    db.commit()
+    db.refresh(comm)
+
+    # 5. Timeline logging
+    if changes:
+        TimelineLogger.log_communication_updated(
+            db, current_user, comm, lead_name, changes
+        )
+
+        # Handle lead status changes also
+        if "lead_status" in changes:
+            old_status = changes["lead_status"]["old"]
+            new_status = changes["lead_status"]["new"]
+            lead.status = new_status
+            db.commit()
+            TimelineLogger.log_lead_status_change(
+                db, current_user, lead, old_status=old_status, new_status=new_status,
+                ip_address=get_ip_address(request)
             )
-        
-        # Update fields if provided
-        if update_data.subject is not None:
-            comm.subject = update_data.subject
-        
-        if update_data.status is not None:
-            comm.status = update_data.status
-            # If status is completed/held, set completed_at if not already set
-            if update_data.status.lower() in ['completed', 'held'] and not comm.completed_at:
-                comm.completed_at = datetime.utcnow()
-        
-        if update_data.content is not None:
-            comm.content = update_data.content
-        
-        if update_data.scheduled_at is not None:
-            comm.scheduled_at = update_data.scheduled_at
-        
-        if update_data.audio_url is not None:
-            comm.audio_url = update_data.audio_url  
-        
-        if update_data.completed_at is not None:
-            comm.completed_at = update_data.completed_at
-        
-        db.commit()
-        db.refresh(comm)
 
-        # Log timeline action
-        lead = db.query(Lead).filter(Lead.id == comm.lead_id).first()
-        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
-        changes = {
-            "status": {
-                "old": "pending",  # Use the previous status if available
-                "new": comm.status
-            }
-        }
-        TimelineLogger.log_communication_updated(db, current_user, comm, lead_name, changes)
-
-
-        return {
-            'id': comm.id,
-            'lead_id': comm.lead_id,
-            'type': comm.type,
-            'subject': comm.subject,
-            'content': comm.content,
-            'status': comm.status,
-            'scheduled_at': comm.scheduled_at,
-            'completed_at': comm.completed_at,
-            'created_at': comm.created_at,
-            'message': 'Communication updated successfully'
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        print(f"Error updating communication: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to update communication: {str(e)}")
+    return {
+        "message": "Communication updated successfully",
+        "changes": changes
+    }
 
 # Optional: Delete communication endpoint
 @app.delete("/communications/{communication_id}")
@@ -3083,6 +3205,81 @@ async def get_all_attachments(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch attachments: {str(e)}")
     
+@app.get("/timeline")
+def get_global_timeline(
+    page: int = 1,
+    per_page: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Add permission logic here if needed (e.g., only admin can see all)
+    query = db.query(ActionTimeline).order_by(ActionTimeline.created_at.desc())
+    
+    total = query.count()
+    
+    items = query.offset((page - 1) * per_page).limit(per_page).all()
+    
+    return {
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "items": [
+            {
+                "id": t.id,
+                "action_type": t.action_type,
+                "entity_type": t.entity_type,
+                "entity_id": t.entity_id,
+                "lead_id": t.lead_id,
+                "user_name": t.user_name,
+                "description": t.description,
+                "details": t.details,
+                "created_at": t.created_at.isoformat()
+            }
+            for t in items
+        ]
+    }
+
+@app.get("/timeline/lead/{lead_id}")
+def get_lead_timeline(
+    lead_id: int,
+    page: int = 1,
+    per_page: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Permission check: user must have access to this lead
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    query = db.query(ActionTimeline).filter(
+        ActionTimeline.lead_id == lead_id
+    ).order_by(ActionTimeline.created_at.desc())
+    
+    total = query.count()
+    
+    items = query.offset((page - 1) * per_page).limit(per_page).all()
+    
+    return {
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "items": [
+            {
+                "id": t.id,
+                "action_type": t.action_type,
+                "entity_type": t.entity_type,
+                "entity_id": t.entity_id,
+                "lead_id": t.lead_id,
+                "user_name": t.user_name,
+                "description": t.description,
+                "details": t.details,
+                "created_at": t.created_at.isoformat()
+            }
+            for t in items
+        ]
+    }
+    
 # -------------------------------------------------------------------
 # 🕒 CALL REMINDER SCHEDULER
 # -------------------------------------------------------------------
@@ -3182,6 +3379,75 @@ def call_reminder_job():
         print(f"[REMINDER JOB ERROR] {e}")
     finally:
         db.close()
+
+# ======================
+# WhatsApp Templates API
+# ======================
+from models import WhatsAppTemplate
+
+@app.post("/templates/whatsapp")
+async def create_whatsapp_template(
+    data: dict,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    template = WhatsAppTemplate(
+        title=data["title"],
+        content=data["content"],
+        created_by=current_user.id
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return {"status": "created", "template": {"id": template.id}}
+
+@app.get("/templates/whatsapp")
+async def list_whatsapp_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    templates = db.query(WhatsAppTemplate).all()
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "content": t.content,
+            "created_at": t.created_at
+        }
+        for t in templates
+    ]
+
+@app.put("/templates/whatsapp/{template_id}")
+async def update_whatsapp_template(
+    template_id: int,
+    data: dict,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    t = db.query(WhatsAppTemplate).filter(WhatsAppTemplate.id == template_id).first()
+    if not t:
+        raise HTTPException(404, "Template not found")
+
+    t.title = data.get("title", t.title)
+    t.content = data.get("content", t.content)
+
+    db.commit()
+    db.refresh(t)
+    return {"status": "updated"}
+
+@app.delete("/templates/whatsapp/{template_id}")
+async def delete_whatsapp_template(
+    template_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    t = db.query(WhatsAppTemplate).filter(WhatsAppTemplate.id == template_id).first()
+    if not t:
+        raise HTTPException(404, "Template not found")
+
+    db.delete(t)
+    db.commit()
+    return {"status": "deleted"}
 
 
 # --- Scheduler setup ---

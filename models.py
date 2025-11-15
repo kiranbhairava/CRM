@@ -1,6 +1,6 @@
 # models.py - Fixed Data Models with Proper Enum Handling
 import enum
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, Enum, Float, func
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, Enum, Float, func, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from pydantic import BaseModel, EmailStr, validator
@@ -84,7 +84,10 @@ class Communication(Base):
     google_message_id = Column(String(500))
     meet_link = Column(String(1000))
     audio_url = Column(String(1000), nullable=True)
-    # ✅ NEW reminder flags
+    details = Column(JSON, nullable=True)          # or Column(Text, nullable=True)
+    call_type = Column(String(50), nullable=True)
+    call_duration = Column(Integer, nullable=True)
+    lead_status = Column(String(50), nullable=True)
     reminder_15_sent = Column(Boolean, default=False, nullable=False)
     reminder_10_sent = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -401,6 +404,30 @@ class DealCreate(BaseModel):
     course_licenses: Optional[int] = None
     contract_duration: Optional[int] = None
     expected_close_date: Optional[datetime] = None
+
+class EmailTemplate(Base):
+    __tablename__ = "email_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)  # Template name
+    subject = Column(String(500), nullable=False)
+    body = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    creator = relationship("User")
+
+class WhatsAppTemplate(Base):
+    __tablename__ = "whatsapp_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 
 # class ActivityCreate(BaseModel):
 #     type: ActivityType

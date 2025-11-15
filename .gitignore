@@ -4,3 +4,6 @@ notes.txt
 envs
 Backend copy
 uploads
+api/v1
+logger.py
+timeline_logger.py
