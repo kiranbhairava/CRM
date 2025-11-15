@@ -15,7 +15,7 @@ import json
 from database import SessionLocal
 from models import Communication, GoogleToken, User
 from google_integration import GmailManager, GoogleWorkspaceManager, ChatManager
-from timeline_logger import TimelineLogger
+# from timeline_logger import TimelineLogger
 from timeline_helper import TimelineLogger
 
 
