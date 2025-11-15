@@ -134,8 +134,8 @@ from fastapi import Request
 def get_ip_address(request: Request):
     return request.client.host
 
-from api.v1.email_templates import router as email_templates_router
-app.include_router(email_templates_router)
+# from api.v1.email_templates import router as email_templates_router
+# app.include_router(email_templates_router)
 
 # ================ ENDPOINTS ================
 
