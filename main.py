@@ -3537,56 +3537,30 @@ def delete_email_template(template_id: int, db: Session = Depends(get_db), curre
 from fastapi import Query
 
 @app.post("/email-templates/render")
-def render_email_template(template_id: int = Query(...), lead_id: int = Query(...), db: Session = Depends(get_db)):
-    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
-    if not tpl:
+def render_email_template(template_id: int, lead_id: int, db: Session = Depends(get_db)):
+    template = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
+    if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # Build context mapping (lowercase keys)
-    ctx = {
-        "name": (lead.first_name or "") if hasattr(lead, "first_name") else "",
-        "first_name": (lead.first_name or ""),
-        "last_name": (lead.last_name or ""),
-        "full_name": ((lead.first_name or "") + (" " + lead.last_name if lead.last_name else "")).strip(),
-        "email": getattr(lead, "email_address", "") or getattr(lead, "email", "") or "",
-        "phone": getattr(lead, "mobile_number", "") or getattr(lead, "phone", "") or "",
-        "course": getattr(lead, "course_interested_in", "") or getattr(lead, "courseInterest", "") or "",
-        "assigned_to": getattr(lead, "assigned_to_name", "") or ""
+    # Build lead context
+    full_name = f"{lead.first_name or ''} {lead.last_name or ''}".strip()
+
+    # Template body
+    subject = template.subject
+    body = template.body
+
+    #Replace placeholders
+    subject = subject.replace("[Name]", full_name)
+    body = body.replace("[Name]", full_name)
+
+    return {
+        "subject": subject,
+        "body": body
     }
-
-    # Utility: replace {{PLACEHOLDER}} (case-insensitive) -> ctx
-    def replace_double_curly(text):
-        import re
-        def repl(m):
-            key = m.group(1).strip().lower()
-            return str(ctx.get(key, ""))
-        return re.sub(r"\{\{\s*([^}]+)\s*\}\}", repl, text or "")
-
-    # First handle {{...}} placeholders, then try Python style str.format with safe mapping
-    subject_after = replace_double_curly(tpl.subject)
-    body_after = replace_double_curly(tpl.body)
-
-    # Attempt Python str.format replacement with lowercase keys.
-    # Use a safe map that returns empty string for missing keys to avoid KeyError.
-    class SafeDict(dict):
-        def __missing__(self, key):
-            return ""
-    try:
-        subject_after = subject_after.format_map(SafeDict(**ctx))
-    except Exception:
-        # if format fails, keep as-is (already replaced double-curly)
-        pass
-
-    try:
-        body_after = body_after.format_map(SafeDict(**ctx))
-    except Exception:
-        pass
-
-    return {"subject": subject_after, "body": body_after}
 
 # --- Scheduler setup ---
 scheduler = BackgroundScheduler(timezone="UTC")
