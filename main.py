@@ -96,9 +96,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
-
 # app.include_router(calls_router)
 # app.include_router(emails_router)
 # app.include_router(meetings_router)
@@ -172,18 +169,207 @@ async def test_db(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.post("/register")
-async def register_admin(user_data: UserCreate, db: Session = Depends(get_db)):
-    """Register first admin user"""
+from fastapi import FastAPI, HTTPException, Depends, status
+
+# =====================================================
+# AUTHENTICATION ENDPOINTS - UPDATED FOR MULTIPLE ADMINS
+# =====================================================
+
+@app.post("/register/first-admin")
+async def register_first_admin(user_data: UserCreate, db: Session = Depends(get_db)):
+    """
+    Register FIRST admin account (only works if no admins exist yet)
+    
+    This endpoint:
+    - Only works when system has ZERO admins
+    - Allows initial system setup without authentication
+    - After first admin created, all future admin registrations require auth
+    
+    Args:
+        user_data: Admin user details (name, email, password)
+    
+    Returns:
+        Success message with user ID
+    
+    Raises:
+        HTTPException 403: If admins already exist
+        HTTPException 400: If validation fails
+    """
     try:
-        admin = RoleManager.create_admin(db, user_data)
-        return {"message": "Admin created successfully", "user_id": admin.id}
+        # Check if any admin already exists
+        admin_count = db.query(User).filter(User.role == UserRole.ADMIN).count()
+        
+        if admin_count > 0:
+            raise HTTPException(
+                status_code=403,
+                detail="An admin account already exists. Contact your administrator to create new admin accounts."
+            )
+        
+        # Create first admin (no created_by needed)
+        admin = RoleManager.create_admin(db, user_data, created_by=None)
+        
+        # Log timeline action
+        # Note: For first admin, we log with user_id pointing to themselves
+        from timeline_helper import TimelineLogger
+        TimelineLogger.log_user_created(db, admin, admin)
+        
+        return {
+            "message": "First admin registered successfully",
+            "user_id": admin.id,
+            "user_name": admin.name,
+            "next_step": "Login with your credentials at /login"
+        }
+        
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        print(f"Error registering first admin: {str(e)}")
+        raise HTTPException(status_code=500, detail="Registration failed")
+
+
+@app.post("/register")
+async def register_admin(
+    user_data: UserCreate, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Register new admin account (Admin only)
+    
+    This endpoint:
+    - REQUIRES authentication (user must be logged in)
+    - REQUIRES admin role (only admins can create admins)
+    - Creates audit trail via timeline logging
+    - Prevents non-admins from creating accounts
+    
+    Args:
+        user_data: New admin user details
+        current_user: Current logged-in user (must be admin)
+    
+    Returns:
+        Success message with created admin details
+    
+    Raises:
+        HTTPException 403: If user is not admin
+        HTTPException 400: If validation fails
+        HTTPException 500: If database error
+    """
+    try:
+        # Verify current user is active admin
+        if not PermissionChecker.is_admin(current_user):
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can create new admin accounts"
+            )
+        
+        if not current_user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="Your admin account is inactive"
+            )
+        
+        # Create new admin with audit trail
+        admin = RoleManager.create_admin(
+            db, 
+            user_data, 
+            created_by=current_user.id  # Track who created this admin
+        )
+        
+        # Log timeline action
+        TimelineLogger.log_user_created(db, current_user, admin)
+        
+        return {
+            "message": f"Admin '{admin.name}' created successfully by {current_user.name}",
+            "user_id": admin.id,
+            "user_name": admin.name,
+            "user_email": admin.email,
+            "created_by": {
+                "id": current_user.id,
+                "name": current_user.name,
+                "email": current_user.email
+            }
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        print(f"Error creating admin: {str(e)}")
+        raise HTTPException(status_code=500, detail="Admin creation failed")
+
+
+@app.get("/admin/check")
+async def check_admin_exists(db: Session = Depends(get_db)):
+    """
+    Check if any admin exists in the system
+    
+    This endpoint:
+    - PUBLIC (no auth required)
+    - Used by frontend to decide which registration page to show
+    - Returns true if system is already set up, false if initial setup needed
+    
+    Returns:
+        admin_exists: Boolean indicating if any admin exists
+        setup_required: Boolean indicating if first admin registration is available
+    """
+    try:
+        admin_count = db.query(User).filter(User.role == UserRole.ADMIN).count()
+        return {
+            "admin_exists": admin_count > 0,
+            "setup_required": admin_count == 0,
+            "message": "Setup required - create first admin" if admin_count == 0 else "System already initialized"
+        }
+    except Exception as e:
+        print(f"Error checking admin: {str(e)}")
+        raise HTTPException(status_code=500, detail="Check failed")
+
+
+@app.get("/admins")
+async def get_all_admins(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of all admins (Admin only)
+    
+    This endpoint:
+    - REQUIRES admin authentication
+    - Shows who created which admin and when
+    - Useful for admin management and audit trail
+    
+    Returns:
+        List of admin users with creation info
+    """
+    try:
+        if not PermissionChecker.is_admin(current_user):
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can view admin list"
+            )
+        
+        admins = RoleManager.get_all_admins(db, current_user.id)
+        
+        return [{
+            "id": admin.id,
+            "name": admin.name,
+            "email": admin.email,
+            "is_active": admin.is_active,
+            "created_by_id": admin.created_by,
+            "created_at": admin.created_at,
+            "status": "Active" if admin.is_active else "Inactive"
+        } for admin in admins]
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"Error fetching admins: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch admins")
+
 
 @app.post("/login")
 async def login(login_data: UserLogin, db: Session = Depends(get_db)):
-    """Login endpoint"""
+    """Login endpoint - unchanged"""
     user = RoleManager.authenticate_user(db, login_data.email, login_data.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -202,9 +388,10 @@ async def login(login_data: UserLogin, db: Session = Depends(get_db)):
         }
     }
 
+
 @app.get("/me")
 async def get_me(current_user: User = Depends(get_current_user)):
-    """Get current user info"""
+    """Get current user info - unchanged"""
     return {
         "id": current_user.id,
         "name": current_user.name,
