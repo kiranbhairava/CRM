@@ -82,6 +82,10 @@ origins = [
     "http://127.0.0.1:8000",
     "https://crm-frontend-eta-drab.vercel.app",     # ✅ add this
     "https://www.crm-frontend-eta-drab.vercel.app", # (optional)
+    "https://test.gigaversity.in",
+    "https://www.test.gigaversity.in",
+    "https://crm.gigaversity.in",
+    "https://www.crm.gigaversity.in"
 ]
 # CORS
 app.add_middleware(
