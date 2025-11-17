@@ -675,7 +675,7 @@ async def create_communication(
 
     # Timeline logging
     lead_name = f"{lead.first_name} {lead.last_name}"
-    TimelineLogger.log_communication_created(db, current_user, comm, lead_name, ip_address=get_ip_address(request))
+    TimelineLogger.log_communication_created(db, current_user, comm, lead_name)
 
     # If lead status provided, log status change and optionally update Lead.status
     if lead_status_val:
@@ -683,7 +683,7 @@ async def create_communication(
         # Option: update lead.status in DB
         lead.status = lead_status_val
         db.commit()
-        TimelineLogger.log_lead_status_change(db, current_user, lead, old_status=old_status or "Unknown", new_status=lead_status_val, ip_address=get_ip_address(request))
+        TimelineLogger.log_lead_status_change(db, current_user, lead, old_status=old_status or "Unknown", new_status=lead_status_val)
 
     return {
         "message": "Communication created",
@@ -3062,8 +3062,7 @@ async def update_communication(
             lead.status = new_status
             db.commit()
             TimelineLogger.log_lead_status_change(
-                db, current_user, lead, old_status=old_status, new_status=new_status,
-                ip_address=get_ip_address(request)
+                db, current_user, lead, old_status=old_status, new_status=new_status
             )
 
     return {
@@ -3297,13 +3296,16 @@ def get_lead_timeline(
 
 def send_call_reminder(db, comm: Communication, user: User, minutes: int):
     """Send Gmail + Chat reminder to a user before a scheduled call."""
-    subject = f"Reminder: Call scheduled in {minutes} minutes"
+    
+    subject = f"⏰ Your Call Starts in {minutes} Minutes"
+    
     body = (
-        f"Hi {user.name},\n\n"
-        f"You have a scheduled call with lead ID {comm.lead_id}"
-        f"in about {minutes} minutes.\n\n"
-        # f"Scheduled at: {comm.scheduled_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-        f"Please be ready to take the call."
+        f"Dear {user.name},\n\n"
+        f"Your scheduled call begins in {minutes} minutes. "
+        f"Please be ready to join immediately.\n\n"
+        f"Best regards,\n"
+        f"GigaCRM\n"
+        f"Gigaversity"
     )
 
     # --- Gmail ---
