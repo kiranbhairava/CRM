@@ -2436,7 +2436,7 @@ async def get_lead_communications(
             "user_id": c.user_id,
             "type": c.type,
             "subject": c.subject,
-            "content": c.content,
+            # "content": c.content,
             "scheduled_at": c.scheduled_at,
             "completed_at": c.completed_at,
             "status": c.status,
@@ -2448,8 +2448,8 @@ async def get_lead_communications(
             "call_type": getattr(c, "call_type", None),
             "call_duration": getattr(c, "call_duration", None),
             "lead_status": getattr(c, "lead_status", None),
-            "details": getattr(c, "details", None),
-            "attachments": [ { "id": a.id, "filename": a.original_filename } for a in (c.attachments or []) ],
+            # "details": getattr(c, "details", None),
+            # "attachments": [ { "id": a.id, "filename": a.original_filename } for a in (c.attachments or []) ],
             "created_at": c.created_at
         } for c in comms]
     except HTTPException:
