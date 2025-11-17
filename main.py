@@ -3460,6 +3460,133 @@ async def delete_whatsapp_template(
     db.commit()
     return {"status": "deleted"}
 
+from typing import Optional
+from models import EmailTemplate
+
+@app.get("/email-templates")
+def list_email_templates(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    templates = db.query(EmailTemplate).order_by(EmailTemplate.created_at.desc()).offset(skip).limit(limit).all()
+    return templates
+
+@app.get("/email-templates/{template_id}")
+def get_email_template(template_id: int, db: Session = Depends(get_db)):
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return tpl
+
+from pydantic import BaseModel
+
+class EmailTemplateCreate(BaseModel):
+    name: str
+    subject: str
+    body: str
+
+@app.post("/email-templates", status_code=201)
+def create_email_template(payload: EmailTemplateCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    tpl = EmailTemplate(
+        name=payload.name.strip(),
+        subject=payload.subject.strip(),
+        body=payload.body,
+        created_by=current_user.id
+    )
+    db.add(tpl)
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+class EmailTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+@app.put("/email-templates/{template_id}")
+def update_email_template(template_id: int, payload: EmailTemplateUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # permission check
+    if (tpl.created_by is not None) and (current_user.role != "ADMIN") and (tpl.created_by != current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to update this template")
+
+    if payload.name is not None:
+        tpl.name = payload.name.strip()
+    if payload.subject is not None:
+        tpl.subject = payload.subject.strip()
+    if payload.body is not None:
+        tpl.body = payload.body
+
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+@app.delete("/email-templates/{template_id}")
+def delete_email_template(template_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if (tpl.created_by is not None) and (current_user.role != "ADMIN") and (tpl.created_by != current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this template")
+
+    db.delete(tpl)
+    db.commit()
+    return {"message": "Template deleted"}
+
+from fastapi import Query
+
+@app.post("/email-templates/render")
+def render_email_template(template_id: int = Query(...), lead_id: int = Query(...), db: Session = Depends(get_db)):
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Build context mapping (lowercase keys)
+    ctx = {
+        "name": (lead.first_name or "") if hasattr(lead, "first_name") else "",
+        "first_name": (lead.first_name or ""),
+        "last_name": (lead.last_name or ""),
+        "full_name": ((lead.first_name or "") + (" " + lead.last_name if lead.last_name else "")).strip(),
+        "email": getattr(lead, "email_address", "") or getattr(lead, "email", "") or "",
+        "phone": getattr(lead, "mobile_number", "") or getattr(lead, "phone", "") or "",
+        "course": getattr(lead, "course_interested_in", "") or getattr(lead, "courseInterest", "") or "",
+        "assigned_to": getattr(lead, "assigned_to_name", "") or ""
+    }
+
+    # Utility: replace {{PLACEHOLDER}} (case-insensitive) -> ctx
+    def replace_double_curly(text):
+        import re
+        def repl(m):
+            key = m.group(1).strip().lower()
+            return str(ctx.get(key, ""))
+        return re.sub(r"\{\{\s*([^}]+)\s*\}\}", repl, text or "")
+
+    # First handle {{...}} placeholders, then try Python style str.format with safe mapping
+    subject_after = replace_double_curly(tpl.subject)
+    body_after = replace_double_curly(tpl.body)
+
+    # Attempt Python str.format replacement with lowercase keys.
+    # Use a safe map that returns empty string for missing keys to avoid KeyError.
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return ""
+    try:
+        subject_after = subject_after.format_map(SafeDict(**ctx))
+    except Exception:
+        # if format fails, keep as-is (already replaced double-curly)
+        pass
+
+    try:
+        body_after = body_after.format_map(SafeDict(**ctx))
+    except Exception:
+        pass
+
+    return {"subject": subject_after, "body": body_after}
 
 # --- Scheduler setup ---
 scheduler = BackgroundScheduler(timezone="UTC")
