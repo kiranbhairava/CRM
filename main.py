@@ -306,46 +306,46 @@ async def get_timeline(
         print(f"Error fetching timeline: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch timeline: {str(e)}")
 
-@app.get("/timeline/lead/{lead_id}")
-async def get_lead_timeline(
-    lead_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get timeline for a specific lead"""
-    try:
-        # Verify lead exists and user has access
-        lead = db.query(Lead).filter(Lead.id == lead_id).first()
-        if not lead:
-            raise HTTPException(status_code=404, detail="Lead not found")
+# @app.get("/timeline/lead/{lead_id}")
+# async def get_lead_timeline(
+#     lead_id: int,
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db)
+# ):
+#     """Get timeline for a specific lead"""
+#     try:
+#         # Verify lead exists and user has access
+#         lead = db.query(Lead).filter(Lead.id == lead_id).first()
+#         if not lead:
+#             raise HTTPException(status_code=404, detail="Lead not found")
         
-        # Check permissions
-        if not PermissionChecker.is_admin(current_user) and lead.assigned_to != current_user.id:
-            raise HTTPException(status_code=403, detail="You don't have access to this lead's timeline")
+#         # Check permissions
+#         if not PermissionChecker.is_admin(current_user) and lead.assigned_to != current_user.id:
+#             raise HTTPException(status_code=403, detail="You don't have access to this lead's timeline")
         
-        # Get all timeline entries for this lead
-        timeline_entries = db.query(ActionTimeline).filter(
-            ActionTimeline.entity_type == 'lead',
-            ActionTimeline.entity_id == lead_id
-        ).order_by(ActionTimeline.created_at.desc()).all()
+#         # Get all timeline entries for this lead
+#         timeline_entries = db.query(ActionTimeline).filter(
+#             ActionTimeline.entity_type == 'lead',
+#             ActionTimeline.entity_id == lead_id
+#         ).order_by(ActionTimeline.created_at.desc()).all()
         
-        return [{
-            'id': entry.id,
-            'user_id': entry.user_id,
-            'user_name': entry.user_name,
-            'action_type': entry.action_type,
-            'entity_type': entry.entity_type,
-            'entity_id': entry.entity_id,
-            'description': entry.description,
-            'details': entry.details,
-            'created_at': entry.created_at
-        } for entry in timeline_entries]
+#         return [{
+#             'id': entry.id,
+#             'user_id': entry.user_id,
+#             'user_name': entry.user_name,
+#             'action_type': entry.action_type,
+#             'entity_type': entry.entity_type,
+#             'entity_id': entry.entity_id,
+#             'description': entry.description,
+#             'details': entry.details,
+#             'created_at': entry.created_at
+#         } for entry in timeline_entries]
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error fetching lead timeline: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch lead timeline: {str(e)}")
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"Error fetching lead timeline: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Failed to fetch lead timeline: {str(e)}")
 
 @app.get("/timeline/stats")
 async def get_timeline_stats(
@@ -2457,53 +2457,53 @@ async def get_lead_communications(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch communications: {str(e)}")
     
-@app.get("/leads/{lead_id}/timeline")
-def get_lead_timeline(lead_id: int, db: Session = Depends(get_db),
-                      current_user: User = Depends(get_current_user)):
+# @app.get("/leads/{lead_id}/timeline")
+# def get_lead_timeline(lead_id: int, db: Session = Depends(get_db),
+#                       current_user: User = Depends(get_current_user)):
 
-    # 1. Get lead (ensure exists)
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
+#     # 1. Get lead (ensure exists)
+#     lead = db.query(Lead).filter(Lead.id == lead_id).first()
+#     if not lead:
+#         raise HTTPException(status_code=404, detail="Lead not found")
 
-    timeline = []
+#     timeline = []
 
-    # 2. Fetch all communications for the lead (calls, emails, meetings, notes)
-    comms = db.query(Communication)\
-              .filter(Communication.lead_id == lead_id)\
-              .order_by(Communication.created_at.desc())\
-              .all()
+#     # 2. Fetch all communications for the lead (calls, emails, meetings, notes)
+#     comms = db.query(Communication)\
+#               .filter(Communication.lead_id == lead_id)\
+#               .order_by(Communication.created_at.desc())\
+#               .all()
 
-    for c in comms:
-        # Determine readable title
-        if c.type == "email":
-            title = "Email Sent"
-        elif c.type == "call":
-            title = "Call Logged"
-        elif c.type == "meeting":
-            title = "Meeting Scheduled"
-        elif c.type == "note":
-            title = "Note Added"
-        else:
-            title = c.type.title()
+#     for c in comms:
+#         # Determine readable title
+#         if c.type == "email":
+#             title = "Email Sent"
+#         elif c.type == "call":
+#             title = "Call Logged"
+#         elif c.type == "meeting":
+#             title = "Meeting Scheduled"
+#         elif c.type == "note":
+#             title = "Note Added"
+#         else:
+#             title = c.type.title()
 
-        # Clean timeline entry
-        timeline.append({
-            "id": c.id,
-            "type": c.type,
-            "title": title,
-            "description": c.subject or (c.content[:80] + "..." if c.content else ""),
-            "timestamp": c.completed_at or c.scheduled_at or c.created_at,
-        })
+#         # Clean timeline entry
+#         timeline.append({
+#             "id": c.id,
+#             "type": c.type,
+#             "title": title,
+#             "description": c.subject or (c.content[:80] + "..." if c.content else ""),
+#             "timestamp": c.completed_at or c.scheduled_at or c.created_at,
+#         })
 
-    # 3. Sort by timestamp DESC
-    timeline.sort(key=lambda x: x["timestamp"], reverse=True)
+#     # 3. Sort by timestamp DESC
+#     timeline.sort(key=lambda x: x["timestamp"], reverse=True)
 
-    return {
-        "lead_id": lead_id,
-        "lead_name": f"{lead.first_name} {lead.last_name}",
-        "timeline": timeline
-    }
+#     return {
+#         "lead_id": lead_id,
+#         "lead_name": f"{lead.first_name} {lead.last_name}",
+#         "timeline": timeline
+#     }
 
 
 @app.get("/communications/{comm_id}")
@@ -3249,46 +3249,46 @@ def get_global_timeline(
         ]
     }
 
-@app.get("/timeline/lead/{lead_id}")
-def get_lead_timeline(
-    lead_id: int,
-    page: int = 1,
-    per_page: int = 20,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    # Permission check: user must have access to this lead
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
+# @app.get("/timeline/lead/{lead_id}")
+# def get_lead_timeline(
+#     lead_id: int,
+#     page: int = 1,
+#     per_page: int = 20,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     # Permission check: user must have access to this lead
+#     lead = db.query(Lead).filter(Lead.id == lead_id).first()
+#     if not lead:
+#         raise HTTPException(status_code=404, detail="Lead not found")
     
-    query = db.query(ActionTimeline).filter(
-        ActionTimeline.lead_id == lead_id
-    ).order_by(ActionTimeline.created_at.desc())
+#     query = db.query(ActionTimeline).filter(
+#         ActionTimeline.lead_id == lead_id
+#     ).order_by(ActionTimeline.created_at.desc())
     
-    total = query.count()
+#     total = query.count()
     
-    items = query.offset((page - 1) * per_page).limit(per_page).all()
+#     items = query.offset((page - 1) * per_page).limit(per_page).all()
     
-    return {
-        "page": page,
-        "per_page": per_page,
-        "total": total,
-        "items": [
-            {
-                "id": t.id,
-                "action_type": t.action_type,
-                "entity_type": t.entity_type,
-                "entity_id": t.entity_id,
-                "lead_id": t.lead_id,
-                "user_name": t.user_name,
-                "description": t.description,
-                "details": t.details,
-                "created_at": t.created_at.isoformat()
-            }
-            for t in items
-        ]
-    }
+#     return {
+#         "page": page,
+#         "per_page": per_page,
+#         "total": total,
+#         "items": [
+#             {
+#                 "id": t.id,
+#                 "action_type": t.action_type,
+#                 "entity_type": t.entity_type,
+#                 "entity_id": t.entity_id,
+#                 "lead_id": t.lead_id,
+#                 "user_name": t.user_name,
+#                 "description": t.description,
+#                 "details": t.details,
+#                 "created_at": t.created_at.isoformat()
+#             }
+#             for t in items
+#         ]
+#     }
     
 # -------------------------------------------------------------------
 # 🕒 CALL REMINDER SCHEDULER
