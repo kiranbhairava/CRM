@@ -66,6 +66,11 @@ class FileAttachment(Base):
     lead = relationship("Lead", back_populates="attachments")
     user = relationship("User")
 
+import pytz
+from datetime import datetime
+
+IST = pytz.timezone("Asia/Kolkata")
+
 # Update Communication model to include attachments
 class Communication(Base):
     __tablename__ = "communications"
@@ -76,8 +81,8 @@ class Communication(Base):
     type = Column(String(50))  # email, meeting, call, note
     subject = Column(String(500))
     content = Column(Text)
-    scheduled_at = Column(DateTime)
-    completed_at = Column(DateTime)
+    scheduled_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
     status = Column(String(50))  # scheduled, completed, cancelled
     feedback = Column(Text, nullable=True)  # New field to store admin feedback
     google_event_id = Column(String(500))
@@ -90,7 +95,7 @@ class Communication(Base):
     lead_status = Column(String(50), nullable=True)
     reminder_15_sent = Column(Boolean, default=False, nullable=False)
     reminder_10_sent = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(IST).replace(tzinfo=None))
     
     
     # Add this relationship

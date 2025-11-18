@@ -107,11 +107,11 @@ class CalendarManager:
                 'description': event_data.get('description', ''),
                 'start': {
                     'dateTime': event_data['start_time'],
-                    'timeZone': event_data.get('timezone', 'UTC'),
+                    'timeZone': event_data.get('timezone', 'Asia/Kolkata'),
                 },
                 'end': {
                     'dateTime': event_data['end_time'],
-                    'timeZone': event_data.get('timezone', 'UTC'),
+                    'timeZone': event_data.get('timezone', 'Asia/Kolkata'),
                 },
                 'attendees': attendees,
                 'conferenceData': {

@@ -115,6 +115,21 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this")
 ALGORITHM = "HS256"
 security = HTTPBearer(auto_error=False)
 
+from datetime import datetime, timedelta
+import pytz
+
+IST = pytz.timezone('Asia/Kolkata')
+
+def now_ist():
+    """Get current time in IST (naive datetime)"""
+    return datetime.now(IST).replace(tzinfo=None)
+
+def format_ist_datetime(dt):
+    """Format IST datetime for display"""
+    if dt is None:
+        return "Not scheduled"
+    return dt.strftime('%B %d, %Y at %I:%M %p IST')
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     if not credentials:
         raise HTTPException(status_code=401, detail="No token")
@@ -451,7 +466,7 @@ async def get_timeline(
         
         # Filter by date range (last N days)
         if days:
-            start_date = datetime.utcnow() - timedelta(days=days)
+            start_date = now_ist() - timedelta(days=days)
             query = query.filter(ActionTimeline.created_at >= start_date)
         
         # Filter by entity type (lead, communication, user, etc.)
@@ -546,7 +561,7 @@ async def get_timeline_stats(
 ):
     """Get timeline statistics"""
     try:
-        start_date = datetime.utcnow() - timedelta(days=days)
+        start_date = now_ist() - timedelta(days=days)
         
         query = db.query(ActionTimeline).filter(ActionTimeline.created_at >= start_date)
         
@@ -786,11 +801,56 @@ async def create_communication(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    def to_dt(v):
-        if not v: return None
-        try: return datetime.fromisoformat(v.replace("Z", "+00:00"))
-        except: return None
+    # def to_dt(v):
+    #     if not v: return None
+    #     try: return datetime.fromisoformat(v.replace("Z", "+00:00"))
+    #     except: return None
 
+    # import pytz
+
+    # IST = pytz.timezone("Asia/Kolkata")
+
+    # from datetime import datetime
+
+    from datetime import datetime
+    import pytz
+
+    IST = pytz.timezone("Asia/Kolkata")
+    UTC = pytz.utc
+
+    def to_dt(v):
+        """
+        Frontend sends 'YYYY-MM-DDTHH:MM' from datetime-local.
+        This function interprets it as IST and converts to UTC for DB.
+        """
+        if not v:
+            return None
+
+        try:
+            # Case 1: "2025-11-18T20:00"
+            if len(v) == 16:
+                naive = datetime.strptime(v, "%Y-%m-%dT%H:%M")
+                ist_dt = IST.localize(naive)
+                return ist_dt.astimezone(UTC)
+
+            # Case 2: "2025-11-18T20:00:00"
+            if len(v) == 19:
+                naive = datetime.strptime(v, "%Y-%m-%dT%H:%M:%S")
+                ist_dt = IST.localize(naive)
+                return ist_dt.astimezone(UTC)
+
+            # Case 3: Full ISO with Z or +offset
+            dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                # treat as IST
+                dt = IST.localize(dt)
+            return dt.astimezone(UTC)
+
+        except Exception:
+            return None
+
+
+        
     scheduled_dt = to_dt(scheduled_at)
     completed_dt = to_dt(completed_at)
 
@@ -835,7 +895,7 @@ async def create_communication(
         audio_url=audio_url,
         google_event_id=google_event_id,
         google_message_id=google_message_id,
-        created_at=datetime.utcnow()
+        created_at=now_ist()
     )
 
     db.add(comm)
@@ -1112,7 +1172,7 @@ async def upload_file(
         # Generate safe filename
         original_filename = file.filename
         file_extension = os.path.splitext(original_filename)[1]
-        safe_filename = f"{current_user.id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{file_extension}"
+        safe_filename = f"{current_user.id}_{now_ist().strftime('%Y%m%d_%H%M%S')}{file_extension}"
         file_path = os.path.join(ATTACHMENT_DIR, safe_filename)
         
         # Save file
@@ -1174,7 +1234,7 @@ async def upload_multiple_files(
             # Generate safe filename
             original_filename = file.filename
             file_extension = os.path.splitext(original_filename)[1]
-            safe_filename = f"{current_user.id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S%f')}{file_extension}"
+            safe_filename = f"{current_user.id}_{now_ist().strftime('%Y%m%d_%H%M%S%f')}{file_extension}"
             file_path = os.path.join(ATTACHMENT_DIR, safe_filename)
             
             # Save file
@@ -1899,6 +1959,19 @@ async def create_calendar_event(
         if participants_list:
             all_attendees = event_data['attendee_emails']
             communication_content += f"\n\nParticipants: {', '.join(all_attendees)}"
+
+        # FIX: preserve IST exactly as frontend sends
+        start_time_str = event_data["start_time"]
+
+        try:
+            import dateutil.parser
+            scheduled_dt = dateutil.parser.isoparse(start_time_str)
+
+            scheduled_dt = scheduled_dt.astimezone(IST).replace(tzinfo=None)
+
+        except:
+            raise HTTPException(status_code=400, detail="Invalid start_time format")
+
         
         # Log communication in CRM
         communication = Communication(
@@ -1907,7 +1980,7 @@ async def create_calendar_event(
             type='meeting',
             subject=event_data['title'],
             content=communication_content,  # ✅ CHANGED: Now includes participants
-            scheduled_at=datetime.fromisoformat(event_data['start_time'].replace('Z', '+00:00')),
+            scheduled_at = scheduled_dt,
             status='scheduled',
             google_event_id=calendar_result['event_id'],
             meet_link=calendar_result['meet_link']
@@ -1975,32 +2048,34 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 import json
 
-# Add this import at the top of main.py
-from datetime import datetime, timedelta
-import pytz
+# # Add this import at the top of main.py
+# from datetime import datetime, timedelta
+# import pytz
 
-# Add this helper function near the top of main.py (after imports)
-def convert_to_ist(utc_time):
-    """Convert UTC datetime to IST"""
-    if utc_time is None:
-        return None
+# # Add this helper function near the top of main.py (after imports)
+# def convert_to_ist(utc_time):
+#     """Convert UTC datetime to IST"""
+#     if utc_time is None:
+#         return None
     
-    # If datetime is naive (no timezone), assume it's UTC
-    if utc_time.tzinfo is None:
-        utc_time = pytz.utc.localize(utc_time)
+#     # If datetime is naive (no timezone), assume it's UTC
+#     if utc_time.tzinfo is None:
+#         utc_time = pytz.utc.localize(utc_time)
     
-    ist = pytz.timezone('Asia/Kolkata')
-    return utc_time.astimezone(ist)
+#     ist = pytz.timezone('Asia/Kolkata')
+#     return utc_time.astimezone(ist)
 
-def format_ist_datetime(dt):
-    """Format datetime in IST for display"""
-    if dt is None:
-        return "Not scheduled"
+# def format_ist_datetime(dt):
+#     """Format datetime in IST for display"""
+#     if dt is None:
+#         return "Not scheduled"
     
-    ist_time = convert_to_ist(dt)
-    return ist_time.strftime('%B %d, %Y at %I:%M %p IST')
+#     ist_time = convert_to_ist(dt)
+#     return ist_time.strftime('%B %d, %Y at %I:%M %p IST')
 
 # Replace the /communications/{id}/reschedule endpoint with this updated version:
+
+
 
 @app.put("/communications/{communication_id}/reschedule")
 async def reschedule_meeting(
@@ -2009,41 +2084,51 @@ async def reschedule_meeting(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Reschedule a meeting - updates calendar and notifies all attendees"""
+    """Reschedule a meeting (IST-native) and update Google Calendar."""
     try:
-        # Get the communication record
+        # -------------------------
+        # Fetch meeting + lead
+        # -------------------------
         communication = db.query(Communication).filter(
             Communication.id == communication_id,
             Communication.type == 'meeting'
         ).first()
-        
+
         if not communication:
             raise HTTPException(status_code=404, detail="Meeting not found")
-        
-        # Get lead details
+
         lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
-        
-        # Store old meeting details for notification
+
         old_date = communication.scheduled_at
-        
-        # Parse new datetime - handle both UTC and IST input
-        new_start_time = datetime.fromisoformat(meeting_data.start_time.replace('Z', '+00:00'))
-        new_end_time = datetime.fromisoformat(meeting_data.end_time.replace('Z', '+00:00'))
-        
-        # Update meeting details in database (store in UTC)
+
+        # -----------------------------------------------------------
+        # 🔥 FIX: Parse IST exactly as frontend sends (NO UTC shift)
+        # -----------------------------------------------------------
+        try:
+            new_start_time = datetime.fromisoformat(meeting_data.start_time)
+            new_end_time   = datetime.fromisoformat(meeting_data.end_time)
+        except:
+            raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+        # -------------------------
+        # Update DB
+        # -------------------------
         communication.subject = meeting_data.title
         communication.content = meeting_data.description
         communication.scheduled_at = new_start_time
-        communication.status = 'rescheduled'
-        
-        # Try to update Google Calendar event if integrated
+        communication.status = "rescheduled"
+
         google_calendar_updated = False
+
+        # --------------------------------------------------
+        # 🔥 FIX: Update Google Calendar using IST timezone
+        # --------------------------------------------------
         try:
             token = db.query(GoogleToken).filter(GoogleToken.user_id == current_user.id).first()
+
             if token and communication.google_event_id:
-                # Update Google Calendar event
                 creds_data = {
                     'token': token.token,
                     'refresh_token': token.refresh_token,
@@ -2052,146 +2137,121 @@ async def reschedule_meeting(
                     'client_secret': token.client_secret,
                     'scopes': json.loads(token.scopes)
                 }
+
                 credentials = GoogleWorkspaceManager.get_credentials(creds_data)
-                
-                # Update the calendar event with IST timezone
-                service = build('calendar', 'v3', credentials=credentials)
+                service = build("calendar", "v3", credentials=credentials)
+
                 event = service.events().get(
-                    calendarId='primary',
+                    calendarId="primary",
                     eventId=communication.google_event_id
                 ).execute()
-                
-                # Update event details with IST timezone
-                event['summary'] = meeting_data.title
-                event['description'] = meeting_data.description
-                event['start'] = {
-                    'dateTime': meeting_data.start_time,
-                    'timeZone': 'Asia/Kolkata'  # ✅ Fixed: Use IST timezone
+
+                event["summary"] = meeting_data.title
+                event["description"] = meeting_data.description
+
+                # ✔ Correct timezone-safe update
+                event["start"] = {
+                    "dateTime": meeting_data.start_time,
+                    "timeZone": "Asia/Kolkata"
                 }
-                event['end'] = {
-                    'dateTime': meeting_data.end_time,
-                    'timeZone': 'Asia/Kolkata'  # ✅ Fixed: Use IST timezone
+                event["end"] = {
+                    "dateTime": meeting_data.end_time,
+                    "timeZone": "Asia/Kolkata"
                 }
-                
-                # Update with notification to all attendees
-                updated_event = service.events().update(
-                    calendarId='primary',
+
+                service.events().update(
+                    calendarId="primary",
                     eventId=communication.google_event_id,
                     body=event,
-                    sendUpdates='all'
+                    sendUpdates="all"
                 ).execute()
-                
+
                 google_calendar_updated = True
-                
+
         except Exception as e:
-            print(f"Google Calendar update failed: {str(e)}")
-        
-        # If Google Calendar not integrated, send manual email notification
+            print("Google Calendar update failed:", e)
+
+        # -----------------------------------------------------------
+        # Optional: Email notification fallback (unchanged)
+        # -----------------------------------------------------------
         if not google_calendar_updated:
             try:
-                # Extract all attendees
                 attendees = [lead.email_address]
-                if communication.content:
-                    import re
-                    participants_match = re.search(r'Participants: (.+?)(?:\n|$)', communication.content)
-                    if participants_match:
-                        participants = [p.strip() for p in participants_match.group(1).split(',')]
-                        attendees.extend(participants)
-                
-                # Format dates in IST for email
+
+                # Extract participants from content
+                import re
+                pm = re.search(r"Participants: (.+?)(?:\n|$)", communication.content or "")
+                if pm:
+                    attendees += [p.strip() for p in pm.group(1).split(",")]
+
                 old_date_ist = format_ist_datetime(old_date)
                 new_date_ist = format_ist_datetime(new_start_time)
-                
-                notification_subject = f"Meeting Rescheduled: {meeting_data.title}"
-                notification_body = f"""
+
+                subject = f"Meeting Rescheduled: {meeting_data.title}"
+                body = f"""
                 <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                        <h2 style="color: #f59e0b; border-bottom: 2px solid #f59e0b; padding-bottom: 10px;">
-                            Meeting Rescheduled
-                        </h2>
-                        
-                        <p>Hello,</p>
-                        
-                        <p>Your meeting has been rescheduled to a new date and time.</p>
-                        
-                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #1f2937;">Meeting Details:</h3>
-                            <p><strong>Title:</strong> {meeting_data.title}</p>
-                            <p><strong>Previous Date:</strong> {old_date_ist}</p>
-                            <p><strong>New Date:</strong> {new_date_ist}</p>
-                            {f'<p><strong>Description:</strong> {meeting_data.description}</p>' if meeting_data.description else ''}
-                            {f'<p><strong>Meet Link:</strong> <a href="{communication.meet_link}">{communication.meet_link}</a></p>' if communication.meet_link else ''}
-                        </div>
-                        
-                        <p>If you have any questions, please contact {current_user.name}.</p>
-                        
-                        <p style="color: #6b7280; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-                            This is an automated notification. All times are in Indian Standard Time (IST).
-                        </p>
-                    </div>
+                <body style="font-family: Arial;">
+                    <h2>Meeting Rescheduled</h2>
+                    <p><strong>Previous:</strong> {old_date_ist}</p>
+                    <p><strong>New:</strong> {new_date_ist}</p>
+                    <p><strong>Meet Link:</strong> {communication.meet_link or "N/A"}</p>
                 </body>
                 </html>
                 """
-                
-                # Send via Gmail if integrated
+
                 token = db.query(GoogleToken).filter(GoogleToken.user_id == current_user.id).first()
                 if token:
-                    try:
-                        creds_data = {
-                            'token': token.token,
-                            'refresh_token': token.refresh_token,
-                            'token_uri': token.token_uri,
-                            'client_id': token.client_id,
-                            'client_secret': token.client_secret,
-                            'scopes': json.loads(token.scopes)
-                        }
-                        credentials = GoogleWorkspaceManager.get_credentials(creds_data)
-                        
-                        for attendee_email in attendees:
-                            GmailManager.send_email(credentials, {
-                                'to': attendee_email,
-                                'subject': notification_subject,
-                                'body': notification_body,
-                                'is_html': True
-                            })
-                    except Exception as email_error:
-                        print(f"Failed to send email: {str(email_error)}")
-                        
-            except Exception as notify_error:
-                print(f"Notification failed: {str(notify_error)}")
-        
+                    creds_data = {
+                        'token': token.token,
+                        'refresh_token': token.refresh_token,
+                        'token_uri': token.token_uri,
+                        'client_id': token.client_id,
+                        'client_secret': token.client_secret,
+                        'scopes': json.loads(token.scopes)
+                    }
+                    credentials = GoogleWorkspaceManager.get_credentials(creds_data)
+
+                    for email in attendees:
+                        GmailManager.send_email(credentials, {
+                            "to": email,
+                            "subject": subject,
+                            "body": body,
+                            "is_html": True
+                        })
+
+            except Exception as e:
+                print("Email notification failed:", e)
+
         db.commit()
         db.refresh(communication)
 
-        # ✅ ADD: Timeline logging
-        lead = db.query(Lead).filter(Lead.id == communication.lead_id).first()
-        lead_name = f"{lead.first_name} {lead.last_name}" if lead else "Unknown"
+        # -----------------------------------------------------------
+        # Timeline
+        # -----------------------------------------------------------
         changes = {
-            "status": {
-                "old": communication.status,
-                "new": "rescheduled"
-            },
-            "scheduled_at": {
-                "old": str(old_date),
-                "new": str(new_start_time)
-            }
+            "status": {"old": "scheduled", "new": "rescheduled"},
+            "scheduled_at": {"old": str(old_date), "new": str(new_start_time)}
         }
-        TimelineLogger.log_communication_updated(db, current_user, communication, lead_name, changes)
-        
+
+        TimelineLogger.log_communication_updated(
+            db, current_user, communication, f"{lead.first_name} {lead.last_name}", changes
+        )
+
         return {
-            'id': communication.id,
-            'status': communication.status,
-            'scheduled_at': communication.scheduled_at,
-            'google_calendar_updated': google_calendar_updated,
-            'message': 'Meeting rescheduled and attendees notified' if google_calendar_updated else 'Meeting rescheduled'
+            "id": communication.id,
+            "status": communication.status,
+            "scheduled_at": communication.scheduled_at,
+            "google_calendar_updated": google_calendar_updated,
+            "message": "Meeting rescheduled successfully"
         }
-        
+
     except HTTPException:
         raise
+
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to reschedule meeting: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to reschedule meeting: {e}")
+
 
 @app.put("/communications/{communication_id}/cancel")
 async def cancel_meeting(
@@ -2388,7 +2448,7 @@ async def mark_meeting_complete(
         
         # Update to completed
         communication.status = 'completed'
-        communication.completed_at = datetime.utcnow()
+        communication.completed_at = now_ist()
         
         # Add feedback if provided
         if meeting_data and meeting_data.feedback:
@@ -2478,7 +2538,7 @@ async def get_calendar_events(
 #             type='email',
 #             subject=email_data['subject'],
 #             content=email_data['body'],
-#             completed_at=datetime.utcnow(),
+#             completed_at=now_ist(),
 #             status='completed',
 #             google_message_id=result['message_id']
 #         )
@@ -2552,7 +2612,7 @@ async def send_email_with_attachments(
             type='email',
             subject=email_data['subject'],
             content=email_data['body'],
-            completed_at=convert_to_ist(datetime.utcnow()),
+            completed_at=(now_ist()),
             status='completed',
             google_message_id=result['message_id']
         )
@@ -2628,8 +2688,9 @@ async def get_lead_communications(
             "type": c.type,
             "subject": c.subject,
             # "content": c.content,
-            "scheduled_at": c.scheduled_at,
-            "completed_at": c.completed_at,
+            "scheduled_at": c.scheduled_at.isoformat() if c.scheduled_at else None,
+            "completed_at": c.completed_at.isoformat() if c.completed_at else None,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
             "status": c.status,
             "feedback": c.feedback,
             "meet_link": c.meet_link,
@@ -2641,7 +2702,7 @@ async def get_lead_communications(
             "lead_status": getattr(c, "lead_status", None),
             # "details": getattr(c, "details", None),
             # "attachments": [ { "id": a.id, "filename": a.original_filename } for a in (c.attachments or []) ],
-            "created_at": c.created_at
+            # "created_at": c.created_at
         } for c in comms]
     except HTTPException:
         raise
@@ -2819,7 +2880,7 @@ async def get_sales_performance_report(
         if date:
             target_date = datetime.strptime(date, "%Y-%m-%d")
         else:
-            target_date = datetime.utcnow()
+            target_date = now_ist()
         
         if period == "daily":
             start_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -3152,7 +3213,7 @@ async def export_sales_performance_report(
         io.StringIO(csv_content),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=sales-report-{period}-{datetime.utcnow().strftime('%Y%m%d')}.csv"
+            "Content-Disposition": f"attachment; filename=sales-report-{period}-{now_ist().strftime('%Y%m%d')}.csv"
         }
     )
     
@@ -3206,19 +3267,20 @@ async def update_communication(
     set_if_changed("status", data.get("status"))
 
     # 2. Date fields
-    def to_dt(v):
-        if not v:
-            return None
-        try:
-            return datetime.fromisoformat(v.replace("Z", "+00:00"))
-        except:
-            return None
+    # def to_dt(v):
+    #     if not v:
+    #         return None
+    #     try:
+    #         return datetime.fromisoformat(v.replace("Z", "+00:00"))
+    #     except:
+    #         return None
 
-    if "scheduled_at" in data:
-        set_if_changed("scheduled_at", to_dt(data["scheduled_at"]))
-
-    if "completed_at" in data:
-        set_if_changed("completed_at", to_dt(data["completed_at"]))
+    # ✅ SIMPLE: Just parse as-is
+    if "scheduled_at" in data and data["scheduled_at"]:
+        comm.scheduled_at = datetime.fromisoformat(data["scheduled_at"])
+    
+    if "completed_at" in data and data["completed_at"]:
+        comm.completed_at = datetime.fromisoformat(data["completed_at"])
 
     # 3. Explicit call fields
     set_if_changed("call_type", data.get("call_type"))
@@ -3538,11 +3600,13 @@ def send_call_reminder(db, comm: Communication, user: User, minutes: int):
 
 
 def call_reminder_job():
-    """Runs every minute; sends 15-min and 10-min call reminders."""
+    """Runs every minute; sends 15-min and 10-min call reminders"""
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
+        # ✅ SIMPLE: Use IST directly
+        now = now_ist()
         window = timedelta(seconds=60)
+        
         target_15_from = now + timedelta(minutes=15) - window
         target_15_to = now + timedelta(minutes=15) + window
         target_10_from = now + timedelta(minutes=10) - window
@@ -3755,8 +3819,115 @@ def render_email_template(template_id: int, lead_id: int, db: Session = Depends(
         "body": body
     }
 
+
+# Add imports at top if not present
+from datetime import datetime, timedelta
+from sqlalchemy import and_
+
+# New endpoint
+@app.get("/activities/upcoming")
+async def upcoming_activities(
+    days: int = 7,
+    limit_per_type: int = 5,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Return upcoming calls, scheduled emails and demos for the current user.
+    Uses the existing Communication table (type: 'call', 'email', 'meeting'/'demo').
+    """
+    try:
+        now = now_ist()
+        future = now + timedelta(days=days)
+
+        # Common base query: communications that belong to the user and are scheduled in the window
+        base_q = db.query(Communication).filter(
+            Communication.user_id == current_user.id,
+            Communication.scheduled_at != None,
+            Communication.scheduled_at >= now,
+            Communication.scheduled_at <= future
+        )
+
+        # Calls
+        calls_q = base_q.filter(Communication.type == 'call').order_by(Communication.scheduled_at.asc()).limit(limit_per_type)
+        calls = [{
+            "id": c.id,
+            "type": c.type,
+            "subject": c.subject,
+            "lead_id": c.lead_id,
+            "lead_name": getattr(c, "lead_name", None) or None,
+            "content": c.content,
+            "scheduled_time": c.scheduled_at.isoformat() if c.scheduled_at else None,
+            "status": c.status
+        } for c in calls_q.all()]
+
+        # Scheduled Emails (type 'email' and not yet completed/sent)
+        emails_q = base_q.filter(
+            Communication.type == 'email',
+            # optionally only scheduled ones: scheduled_at is used already; exclude already 'sent' or 'completed'
+            Communication.status.notin_(["sent", "completed"])
+        ).order_by(Communication.scheduled_at.asc()).limit(limit_per_type)
+        emails = [{
+            "id": e.id,
+            "type": e.type,
+            "subject": e.subject,
+            "lead_id": e.lead_id,
+            "lead_name": getattr(e, "lead_name", None) or None,
+            "scheduled_time": e.scheduled_at.isoformat() if e.scheduled_at else None,
+            "status": e.status
+        } for e in emails_q.all()]
+
+        # Demos / Meetings (some codebases use 'meeting' or 'demo' in type)
+        demos_q = base_q.filter(Communication.type.in_(["meeting", "demo"])).order_by(Communication.scheduled_at.asc()).limit(limit_per_type)
+        demos = [{
+            "id": d.id,
+            "type": d.type,
+            "subject": d.subject,
+            "lead_id": d.lead_id,
+            "lead_name": getattr(d, "lead_name", None) or None,
+            "scheduled_time": d.scheduled_at.isoformat() if d.scheduled_at else None,
+            "status": d.status,
+            "meet_link": d.meet_link if hasattr(d, "meet_link") else None
+        } for d in demos_q.all()]
+
+        # Counts (overall in the window)
+        counts = {
+            "calls": db.query(Communication).filter(
+                Communication.user_id == current_user.id,
+                Communication.type == 'call',
+                Communication.scheduled_at >= now,
+                Communication.scheduled_at <= future
+            ).count(),
+            "emails": db.query(Communication).filter(
+                Communication.user_id == current_user.id,
+                Communication.type == 'email',
+                Communication.scheduled_at >= now,
+                Communication.scheduled_at <= future,
+                Communication.status.notin_(["sent","completed"])
+            ).count(),
+            "demos": db.query(Communication).filter(
+                Communication.user_id == current_user.id,
+                Communication.type.in_(["meeting","demo"]),
+                Communication.scheduled_at >= now,
+                Communication.scheduled_at <= future
+            ).count()
+        }
+
+        return {
+            "counts": counts,
+            "calls": calls,
+            "emails": emails,
+            "demos": demos,
+            "window_days": days
+        }
+
+    except Exception as e:
+        print("Upcoming activities error:", str(e))
+        raise HTTPException(status_code=500, detail="Failed to fetch upcoming activities")
+
+
 # --- Scheduler setup ---
-scheduler = BackgroundScheduler(timezone="UTC")
+scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 scheduler.add_job(call_reminder_job, "interval", seconds=60, id="call_reminder")
 
 @app.on_event("startup")
