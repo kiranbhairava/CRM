@@ -85,7 +85,9 @@ origins = [
     "https://test.gigaversity.in",
     "https://www.test.gigaversity.in",
     "https://crm.gigaversity.in",
-    "https://www.crm.gigaversity.in"
+    "https://www.crm.gigaversity.in",
+    "https://core.gigalabs.in",
+    "https://www.core.gigalabs.in"
 ]
 # CORS
 app.add_middleware(
