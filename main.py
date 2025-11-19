@@ -824,6 +824,7 @@ async def create_communication(
         """
         Frontend sends 'YYYY-MM-DDTHH:MM' from datetime-local.
         This function interprets it as IST and converts to UTC for DB.
+        (existing behaviour kept for meetings/emails)
         """
         if not v:
             return None
@@ -851,10 +852,41 @@ async def create_communication(
         except Exception:
             return None
 
+    def to_dt_call_keep_as_is(v):
+        """
+        Parse the frontend datetime as IST and RETURN A NAIVE IST DATETIME
+        so the value is stored exactly as frontend local time (no UTC shift).
+        Example: "2025-11-18T20:00" -> datetime(2025,11,18,20,0) (naive)
+        """
+        if not v:
+            return None
+        try:
+            # accept multiple common formats
+            if len(v) == 16:
+                naive = datetime.strptime(v, "%Y-%m-%dT%H:%M")
+                # localize to IST then drop tzinfo -> naive IST
+                ist_dt = IST.localize(naive)
+                return ist_dt.replace(tzinfo=None)
+            if len(v) == 19:
+                naive = datetime.strptime(v, "%Y-%m-%dT%H:%M:%S")
+                ist_dt = IST.localize(naive)
+                return ist_dt.replace(tzinfo=None)
+            dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                # treat as IST
+                dt = IST.localize(dt)
+            return dt.astimezone(IST).replace(tzinfo=None)
+        except Exception:
+            return None
 
-        
-    scheduled_dt = to_dt(scheduled_at)
-    completed_dt = to_dt(completed_at)
+    # Use call-preserving parsing only for call type
+    if type == "call":
+        scheduled_dt = to_dt_call_keep_as_is(scheduled_at)
+        completed_dt = to_dt_call_keep_as_is(completed_at)
+    else:
+        scheduled_dt = to_dt(scheduled_at)
+        completed_dt = to_dt(completed_at)
+
 
     # Collect explicit call fields and other extras into details
     details = {}
