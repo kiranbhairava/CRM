@@ -172,6 +172,31 @@ class TimelineLogger:
         )
     
     @staticmethod
+    def log_communication_deleted(db: Session, user: User, comm_id: int, comm_type: str, subject: str, lead_name: str, ip: str = None):
+        """Log communication deletion"""
+        comm_type_map = {
+            "email": "Email",
+            "meeting": "Meeting",
+            "call": "Call",
+            "note": "Note"
+        }
+        comm_type_label = comm_type_map.get(comm_type, comm_type)
+        
+        return TimelineLogger.log_action(
+            db, user,
+            action_type="DELETE",
+            entity_type="communication",
+            entity_id=comm_id,
+            description=f"Deleted {comm_type_label}: {subject} for {lead_name}",
+            details={
+                "communication_type": comm_type,
+                "subject": subject,
+                "lead_name": lead_name
+            },
+            ip_address=ip
+        )
+    
+    @staticmethod
     def log_user_created(db: Session, user: User, new_user, ip: str = None):
         """Log user creation"""
         return TimelineLogger.log_action(
@@ -188,6 +213,73 @@ class TimelineLogger:
             ip_address=ip
         )
     
+    @staticmethod
+    def log_user_updated(db: Session, user: User, target_user, changed_fields: Dict, ip: str = None):
+        """Log user update"""
+        changes_desc = ", ".join([f"{k}: {v['old']} → {v['new']}" for k, v in changed_fields.items()])
+        return TimelineLogger.log_action(
+            db, user,
+            action_type="UPDATE",
+            entity_type="user",
+            entity_id=target_user.id,
+            description=f"Updated user: {target_user.name} - {changes_desc}",
+            details={
+                "user_name": target_user.name,
+                "changes": changed_fields
+            },
+            ip_address=ip
+        )
+    
+    @staticmethod
+    def log_user_deleted(db: Session, user: User, user_id: int, user_name: str, ip: str = None):
+        """Log user deletion"""
+        return TimelineLogger.log_action(
+            db, user,
+            action_type="DELETE",
+            entity_type="user",
+            entity_id=user_id,
+            description=f"Deleted user: {user_name}",
+            details={
+                "user_name": user_name,
+                "deleted_by": user.name
+            },
+            ip_address=ip
+        )
+    
+    @staticmethod
+    def log_user_activated(db: Session, user: User, target_user, ip: str = None):
+        """Log user activation"""
+        return TimelineLogger.log_action(
+            db, user,
+            action_type="STATUS_CHANGE",
+            entity_type="user",
+            entity_id=target_user.id,
+            description=f"Activated user: {target_user.name}",
+            details={
+                "user_name": target_user.name,
+                "is_active": True,
+                "activated_by": user.name
+            },
+            ip_address=ip
+        )
+    
+    @staticmethod
+    def log_user_deactivated(db: Session, user: User, target_user, ip: str = None):
+        """Log user deactivation"""
+        return TimelineLogger.log_action(
+            db, user,
+            action_type="STATUS_CHANGE",
+            entity_type="user",
+            entity_id=target_user.id,
+            description=f"Deactivated user: {target_user.name}",
+            details={
+                "user_name": target_user.name,
+                "is_active": False,
+                "deactivated_by": user.name
+            },
+            ip_address=ip
+        )
+
     @staticmethod
     def log_user_status_change(db: Session, user: User, target_user_id: int, target_user_name: str, is_active: bool, ip: str = None):
         """Log user activation/deactivation"""
